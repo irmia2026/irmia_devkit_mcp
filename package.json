@@ -22,8 +22,7 @@
   "keywords": ["mcp", "devkit", "coding-tools", "safe-edit", "safe-write"],
   "repository": {
     "type": "git",
-    "url": "https://github.com/irmia2026/irmia_devkit_open",
-    "directory": "irmia_devkit_mcp"
+    "url": "https://github.com/irmia2026/irmia_devkit_mcp"
   },
   "author": "伊尔弥亚",
   "license": "MIT"
