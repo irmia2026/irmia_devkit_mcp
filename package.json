@@ -1,0 +1,29 @@
+{
+  "name": "irmia-devkit-mcp",
+  "version": "1.0.0",
+  "description": "弥亚开发工具箱 MCP — 56 个安全开发工具",
+  "main": "server.py",
+  "bin": {
+    "irmia-devkit": "./bin/irmia-devkit.cmd",
+    "irmia-devkit-mcp": "./bin/irmia-devkit.cmd"
+  },
+  "files": [
+    "server.py",
+    "tools/",
+    "bin/",
+    "pyproject.toml",
+    "requirements.txt",
+    "__main__.py"
+  ],
+  "scripts": {
+    "start": "python server.py --http --port 8000",
+    "start:stdio": "python server.py"
+  },
+  "keywords": ["mcp", "devkit", "coding-tools", "safe-edit"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/irmia2026/irmia_devkit_open"
+  },
+  "author": "伊尔弥亚",
+  "license": "MIT"
+}

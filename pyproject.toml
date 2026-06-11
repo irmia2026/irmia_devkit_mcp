@@ -1,0 +1,14 @@
+[project]
+name = "irmia-devkit-mcp"
+version = "1.0.0"
+description = "Irmia DevKit MCP Server — 为 Vibe Coding 工具提供安全代码开发工具集"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+]
+
+[project.scripts]
+irmia-devkit = "__main__:main"
+
+[tool.ruff.lint]
+ignore = ["E701", "E741"]

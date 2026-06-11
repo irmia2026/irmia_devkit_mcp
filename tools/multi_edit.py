@@ -1,0 +1,230 @@
+"""
+multi_edit - atomic orchestration for multiple exact text edits.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import tempfile
+from datetime import datetime
+from pathlib import Path
+
+from ._file_utils import SAFE_EDIT_MAX_SIZE, read_file_with_encoding, find_closest_line, align_whitespace
+from .safe_edit import _backup_dir
+from .syntax_check import check as syntax_check_file
+
+
+_CODE_SUFFIXES = (".py", ".nim", ".go", ".js", ".ts", ".jsx", ".tsx")
+
+
+def _positions(content: str, old: str) -> list[int]:
+    positions = []
+    pos = 0
+    while True:
+        idx = content.find(old, pos)
+        if idx == -1:
+            break
+        positions.append(idx)
+        pos = idx + len(old)
+    return positions
+
+
+def _line_col(content: str, idx: int) -> tuple[int, int]:
+    line = content[:idx].count("\n") + 1
+    start = content.rfind("\n", 0, idx) + 1
+    return line, idx - start + 1
+
+
+def _apply_one(content: str, edit_item: dict, item_index: int) -> tuple[str, dict]:
+    old = edit_item.get("old", "")
+    new = edit_item.get("new", "")
+    replace_all = bool(edit_item.get("replace_all", False))
+    occurrence = int(edit_item.get("occurrence", 0) or 0)
+    if not old:
+        raise ValueError(f"edit #{item_index}: old must not be empty")
+    positions = _positions(content, old)
+    if not positions:
+        # P0-1: whitespace-tolerant fallback (inherited from safe_edit)
+        aligned = align_whitespace(content, old, new)
+        if aligned and not replace_all:
+            old, new = aligned
+            positions = _positions(content, old)
+        if not positions:
+            closest = find_closest_line(content, old)
+            hint = (
+                f"最接近的行 #{closest['line']}: {closest['text']}——建议复制此行作为 old 参数重试。"
+                if closest
+                else "old 文本在文件中未找到，检查是否包含完整且精确的文本片段（包括缩进和换行）。"
+            )
+            raise ValueError(
+                f"edit #{item_index}: old text not found — {hint}"
+            )
+    if replace_all:
+        return content.replace(old, new), {"replaced": len(positions), "replace_all": True}
+    if occurrence > 0:
+        if occurrence > len(positions):
+            raise ValueError(f"edit #{item_index}: occurrence={occurrence} exceeds match count {len(positions)}")
+        idx = positions[occurrence - 1]
+        return content[:idx] + new + content[idx + len(old):], {"replaced": 1, "occurrence": occurrence}
+    if len(positions) > 1:
+        previews = []
+        for idx in positions[:20]:
+            line, col = _line_col(content, idx)
+            line_start = content.rfind("\n", 0, idx) + 1
+            line_end = content.find("\n", idx)
+            if line_end == -1:
+                line_end = len(content)
+            previews.append({"line": line, "col": col, "preview": content[line_start:line_end].strip()[:100]})
+        raise ValueError(f"edit #{item_index}: old text appears {len(positions)} times; specify occurrence or replace_all")
+    idx = positions[0]
+    return content[:idx] + new + content[idx + len(old):], {"replaced": 1}
+
+
+def _syntax_check_temp(original: Path, content: str, encoding: str) -> dict:
+    if original.suffix.lower() not in _CODE_SUFFIXES:
+        return {"ok": True, "language": "text", "skipped": True}
+    fd = -1
+    tmp_name = ""
+    try:
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{original.name}.", suffix=original.suffix, text=True)
+        with os.fdopen(fd, "w", encoding=encoding, newline="") as f:
+            fd = -1
+            f.write(content)
+        return syntax_check_file(tmp_name)
+    finally:
+        if fd != -1:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+
+
+def _backup_file(path: Path) -> Path:
+    backup_root = _backup_dir()
+    backup_root.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    backup_path = backup_root / f"{path.name}.{ts}.multi.bak"
+    shutil.copy2(str(path), str(backup_path))
+    return backup_path
+
+
+def run(edits: list, syntax_check: bool = True) -> dict:
+    """Apply a list of exact text edits atomically.
+
+    Args:
+        edits: list of {file, old, new[, replace_all, occurrence]}.
+        syntax_check: run syntax check on code files before committing.
+
+    Returns:
+        {ok, applied, total_requested, total_applied, rolled_back_all, backups, plan}
+
+    Multi-edit semantics for the same file:
+        Edits are applied sequentially — the second edit's ``old`` must
+        match the file content **after** the first edit has been applied.
+        Example:
+            [{"file":"a.py", "old":"foo", "new":"bar"},
+             {"file":"a.py", "old":"bar", "new":"baz"}]  # works
+            [{"file":"a.py", "old":"foo", "new":"bar"},
+             {"file":"a.py", "old":"foo", "new":"baz"}]  # fails: second edit can't find "foo"
+    """
+    if not isinstance(edits, list) or not edits:
+        return {"ok": False, "error": "edits must be a non-empty list"}
+
+    files: dict[Path, dict] = {}
+    plan = []
+    try:
+        for i, item in enumerate(edits, 1):
+            if not isinstance(item, dict):
+                return {"ok": False, "error": f"edit #{i} must be an object"}
+            raw_file = item.get("file") or item.get("filepath")
+            if not raw_file:
+                return {"ok": False, "error": f"edit #{i}: file is required"}
+            path = Path(raw_file).resolve()
+            if not path.exists() or not path.is_file():
+                return {"ok": False, "error": f"edit #{i}: file does not exist: {raw_file}"}
+            if path.stat().st_size > SAFE_EDIT_MAX_SIZE:
+                return {"ok": False, "error": f"edit #{i}: file exceeds 20MB limit: {raw_file}"}
+            if path not in files:
+                content, encoding = read_file_with_encoding(path)
+                files[path] = {"original": content, "content": content, "encoding": encoding, "edits": []}
+            new_content, meta = _apply_one(files[path]["content"], item, i)
+            files[path]["content"] = new_content
+            files[path]["edits"].append({"index": i, **meta})
+            plan.append({"file": str(path), "edit": i, **meta})
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "applied": [],
+            "total_requested": len(edits),
+            "total_applied": 0,
+            "rolled_back_all": True,
+        }
+
+    if syntax_check:
+        for path, data in files.items():
+            result = _syntax_check_temp(path, data["content"], data["encoding"])
+            if not result.get("ok"):
+                return {
+                    "ok": False,
+                    "error": f"{path}: syntax check failed",
+                    "syntax_check": result,
+                    "applied": [],
+                    "total_requested": len(edits),
+                    "total_applied": 0,
+                    "rolled_back_all": True,
+                }
+
+    backups: dict[Path, Path] = {}
+    tmp_paths: dict[Path, Path] = {}
+    try:
+        for path, data in files.items():
+            backups[path] = _backup_file(path)
+            fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent), text=True)
+            with os.fdopen(fd, "w", encoding=data["encoding"], newline="") as f:
+                f.write(data["content"])
+            tmp_paths[path] = Path(tmp_name)
+        for path, tmp_path in tmp_paths.items():
+            os.replace(str(tmp_path), str(path))
+    except Exception as exc:
+        rollback_errors = []
+        for path, backup in backups.items():
+            try:
+                shutil.copy2(str(backup), str(path))
+            except OSError as rb_exc:
+                rollback_errors.append({"file": str(path), "error": str(rb_exc)})
+        for tmp_path in tmp_paths.values():
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
+        return {
+            "ok": False,
+            "error": f"commit failed: {exc}",
+            "applied": [],
+            "total_requested": len(edits),
+            "total_applied": 0,
+            "rolled_back_all": True,
+            "rollback_errors": rollback_errors,
+        }
+
+    # calculate total replacements (replace_all may replace >1 instance per edit)
+    replacements_made = sum(e.get("replaced", 1) for e in plan)
+
+    return {
+        "ok": True,
+        "applied": [str(p) for p in files],
+        "total_requested": len(edits),
+        "total_applied": len(edits),
+        "replacements_made": replacements_made,
+        "rolled_back_all": False,
+        "backups": {str(path): str(backup) for path, backup in backups.items()},
+        "plan": plan,
+    }
