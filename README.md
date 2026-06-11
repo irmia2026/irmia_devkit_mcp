@@ -54,9 +54,9 @@ npx irmia-devkit-mcp --http --port 8000
 
 | 方式 | 命令 |
 |------|------|
-| **uv** | `uvx --from git+https://github.com/irmia2026/irmia_devkit_open.git#subdirectory=irmia_devkit_mcp irmia-devkit --http --port 8000` |
-| **pip** | `pip install git+https://github.com/irmia2026/irmia_devkit_open.git#subdirectory=irmia_devkit_mcp && irmia-devkit --http --port 8000` |
-| **npx** | `npx github:irmia2026/irmia_devkit_open/irmia_devkit_mcp --http --port 8000` |
+| **uv** | `uvx --from git+https://github.com/irmia2026/irmia_devkit_mcp.git irmia-devkit --http --port 8000` |
+| **pip** | `pip install git+https://github.com/irmia2026/irmia_devkit_mcp.git && irmia-devkit --http --port 8000` |
+| **npx** | `npx github:irmia2026/irmia_devkit_mcp --http --port 8000` |
 
 启动脚本会自动 `pip install mcp`，并报告可选外部程序的安装状态。
 

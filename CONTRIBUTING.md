@@ -3,7 +3,7 @@
 ## 环境
 
 ```bash
-git clone https://github.com/irmia2026/irmia_devkit_open.git
+git clone https://github.com/irmia2026/irmia_devkit_mcp.git
 cd irmia_devkit_mcp
 pip install -e . && pip install pytest
 ```
