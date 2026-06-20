@@ -121,4 +121,4 @@ npx irmia-devkit-mcp --http --port 8000
 
 ## 许可
 
-MIT
+AGPL 3.0
