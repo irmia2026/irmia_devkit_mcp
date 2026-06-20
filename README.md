@@ -1,6 +1,6 @@
 # Irmia DevKit MCP
 
-为 Vibe Coding 工具提供 57 个安全开发工具。
+为 Vibe Coding 工具提供 64 个安全开发工具。
 
 ## 接入
 
@@ -91,18 +91,19 @@ npx irmia-devkit-mcp --http --port 8000
 | `code_index` | tree-sitter-* | 多语言符号索引 | Python ast 可用 |
 | `html_extract` | beautifulsoup4 | HTML 解析 | 返回安装指引 |
 
-## 工具总览 (57)
+## 工具总览 (64)
 
 | # | 分组 | 工具 |
 |:--:|------|------|
-| 10 | 安全编辑链 | `safe_edit` `safe_write` `safe_backups` `safe_rollback` `file_patch` `file_read` `multi_edit` `syntax_check` `lint_runner` `test_runner` |
-| 12 | Git & GitHub | `git_status` `git_diff` `git_log` `git_commit` `git_branch` `git_remote` `git_push` `git_changelog` `gh_pr` `gh_issue` `gh_release` `gh_repo` |
-| 9 | 文件 & 搜索 | `es_search` `rg_search` `dir_tree` `dir_list` `file_diff` `file_hash` `file_remove` `file_zip` `config_diff` |
+| 10 | 安全编辑链 | `safe_edit` `safe_write` `safe_backups` `safe_rollback` `file_patch` `file_preview` `syntax_check` `lint_runner` `test_runner` `multi_edit` |
+| 11 | Git & GitHub | `git_status` `git_diff` `git_log` `git_commit` `git_branch` `git_remote` `git_push` `git_changelog` `gh_pr` `gh_issue` `gh_release` `gh_repo` |
+| 12 | 文件系统 | `safe_read` `es_search` `rg_search` `dir_tree` `dir_list` `file_diff` `file_hash` `file_zip` `file_unzip` `file_remove` `disk_info` `config_diff` |
+| 4 | 系统信息 | `port_check` `proc_list` `sys_snapshot` `tool_stats` |
 | 3 | 网络 | `http_get` `http_post` `http_download` |
 | 1 | 执行 | `shell_exec` |
 | 6 | 代码智能 | `code_index` `code_explore` `code_pack` `code_diff_impact` `code_status` `symbol_rename` |
 | 8 | 文本处理 | `html_extract` `json_query` `text_filter` `diff_strings` `csv_parse` `csv_gen` `md_strip` `log_parse` |
-| 8 | 编码/时间/扩展 | `encode_decode` `time` `db_query` `dep_scan` `project_init` `uuid_gen` `semver_compare` `port_check` |
+| 7 | 编码/时间/扩展 | `encode_decode` `time` `db_query` `dep_scan` `project_init` `uuid_gen` `semver_compare` `op_log` |
 
 ## 安全
 

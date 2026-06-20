@@ -8,7 +8,9 @@ tree-sitter 多语言支持（可选依赖：tree-sitter-{go,rust,java,c,cpp,jav
 from __future__ import annotations
 
 import ast as py_ast
+import concurrent.futures
 import json
+import multiprocessing
 import os
 import re
 import sqlite3
@@ -39,6 +41,10 @@ _SOURCE_HEAD_LINES = 15
 _SOURCE_TAIL_LINES = 5
 _PACK_MAX_LINES = 2000
 _PROGRESS_INTERVAL_FILES = 50
+_STREAM_BATCH_SIZE = 50  # Write to DB every N files to limit memory
+
+# Worker count for parallel parsing
+_MAX_WORKERS = max(1, min(multiprocessing.cpu_count() // 2, 8))
 
 _LANG_MAP: dict[str, str] = {
     ".py": "python",
@@ -64,7 +70,10 @@ _DEFAULT_IGNORE = {
     "__pycache__", ".git", "node_modules", ".venv", "venv",
     ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
     ".eggs", "build", "dist", "target", ".codegraph",
+    "tests", "__pycache__",
 }
+
+_MAX_FILE_SIZE = 1_000_000  # 1 MB，超大文件（测试数据/json fixture）跳过
 
 _QUERY_ROUTES = [
     (re.compile(r"从\s+(\S+)\s+到\s+(\S+)"), "trace_closed"),
@@ -176,7 +185,7 @@ class CodeGraph:
 
     def _conn_get(self) -> sqlite3.Connection:
         if self._conn is None:
-            self._ensure_db()  # already sets self._conn
+            self._ensure_db()
         return self._conn
 
     def close(self) -> None:
@@ -199,6 +208,10 @@ class CodeGraph:
         if not incremental:
             conn.execute("DELETE FROM symbols")
             conn.execute("DELETE FROM edges")
+            try:
+                conn.execute("DELETE FROM sym_fts")
+            except Exception:
+                pass
 
         stats = {"files": 0, "symbols": 0, "edges": 0, "skipped": 0}
         mtimes: dict[str, float] = {}
@@ -211,44 +224,99 @@ class CodeGraph:
         files_scanned = 0
 
         all_files = [f for f in root.rglob("*") if f.is_file() and f.suffix.lower() in _LANG_MAP
-                     and not any(p in _DEFAULT_IGNORE for p in f.parts)]
-        for fpath in all_files:
-            rp = str(fpath.relative_to(root)).replace("\\", "/")
-            if incremental and rp in mtimes and mtimes[rp] >= fpath.stat().st_mtime:
-                continue
-            if incremental:
-                conn.execute("DELETE FROM symbols WHERE file=?", (rp,))
-                conn.execute("DELETE FROM edges WHERE file=?", (rp,))
-            try:
-                symbols, edges = _extract_file(str(fpath), fpath.suffix.lower())
+                     and not any(p in _DEFAULT_IGNORE for p in f.parts)
+                     and f.stat().st_size <= _MAX_FILE_SIZE]
+        
+        # P0-3 fix: clean up deleted files in incremental mode
+        changed_files: list[Path] = []
+        if incremental and mtimes:
+            indexed_files = set(mtimes.keys())
+            current_files = {str(f.relative_to(root)).replace("\\", "/") for f in all_files}
+            deleted = indexed_files - current_files
+            for dp in deleted:
+                conn.execute("DELETE FROM symbols WHERE file=?", (dp,))
+                conn.execute("DELETE FROM edges WHERE file=?", (dp,))
+                try:
+                    conn.execute("DELETE FROM sym_fts WHERE file=?", (dp,))
+                except Exception:
+                    pass
+                del mtimes[dp]
+            # Filter to only changed files
+            for fpath in all_files:
+                rp = str(fpath.relative_to(root)).replace("\\", "/")
+                if rp not in mtimes or mtimes[rp] < fpath.stat().st_mtime:
+                    changed_files.append(fpath)
+        else:
+            changed_files = all_files
+
+        total_files = len(all_files)
+        changed_count = len(changed_files)
+
+        # ── Single-threaded parsing + batch write ──
+        if changed_count > 0:
+            worker_args = [(str(f), f.suffix.lower(), str(root)) for f in changed_files]
+            
+            # Single-threaded parsing is faster for typical projects (<1000 files)
+            results = []
+            for args in worker_args:
+                try:
+                    results.append(_extract_file_worker(args))
+                except Exception:
+                    stats["skipped"] += 1
+            
+            # Batch write
+            for rp, suffix, mtime_val, symbols, edges in results:
                 if incremental:
-                    mtimes[rp] = fpath.stat().st_mtime
-                for s in symbols:
-                    conn.execute(
+                    conn.execute("DELETE FROM symbols WHERE file=?", (rp,))
+                    conn.execute("DELETE FROM edges WHERE file=?", (rp,))
+                    try:
+                        conn.execute("DELETE FROM sym_fts WHERE file=?", (rp,))
+                    except Exception:
+                        pass
+                    mtimes[rp] = mtime_val
+                
+                if symbols:
+                    conn.executemany(
                         "INSERT INTO symbols(name,kind,file,line,signature,source,doc,visibility,is_async) "
-                        "VALUES(?,?,?,?,?,?,?,?,?)",
-                        (s["name"], s["kind"], rp, s.get("line"), s.get("signature"),
-                         s.get("source"), s.get("doc"), s.get("visibility", "public"),
-                         s.get("is_async", 0)),
+                        "VALUES(:name,:kind,:file,:line,:signature,:source,:doc,:visibility,:is_async)",
+                        [{"name": s["name"], "kind": s["kind"], "file": rp,
+                          "line": s.get("line"), "signature": s.get("signature"),
+                          "source": s.get("source"), "doc": s.get("doc"),
+                          "visibility": s.get("visibility", "public"),
+                          "is_async": s.get("is_async", 0)} for s in symbols],
                     )
-                for e in edges:
-                    conn.execute(
-                        "INSERT INTO edges(from_sym,to_sym,kind,file,line) VALUES(?,?,?,?,?)",
-                        (e["from"], e["to"], e["kind"], rp, e.get("line")),
+                if edges:
+                    conn.executemany(
+                        "INSERT INTO edges(from_sym,to_sym,kind,file,line) VALUES(:from,:to,:kind,:file,:line)",
+                        [{"from": e["from"], "to": e["to"], "kind": e["kind"],
+                          "file": rp, "line": e.get("line")} for e in edges],
                     )
+                if incremental and symbols:
+                    try:
+                        conn.executemany(
+                            "INSERT INTO sym_fts(name, file, signature) VALUES(?, ?, ?)",
+                            [(s["name"], rp, s.get("signature", "")) for s in symbols],
+                        )
+                    except Exception:
+                        pass
+                
                 stats["symbols"] += len(symbols)
                 stats["edges"] += len(edges)
                 stats["files"] += 1
-            except SyntaxError:
-                stats["skipped"] += 1
-            except Exception:
-                stats["skipped"] += 1
-
-            files_scanned += 1
-            if files_scanned % _PROGRESS_INTERVAL_FILES == 0:
-                progress_log.append({"phase": "indexing", "file": rp,
-                                     "progress": f"{stats['files']}/{len(all_files)}",
-                                     "elapsed_s": round(time.time() - start, 1)})
+                
+                files_scanned += 1
+                if files_scanned % _PROGRESS_INTERVAL_FILES == 0:
+                    progress_log.append({"phase": "indexing", "file": rp,
+                                       "progress": f"{stats['files']}/{total_files}",
+                                       "elapsed_s": round(time.time() - start, 1)})
+            
+            # Full FTS5 rebuild if not incremental or too many changes
+            if not incremental or changed_count >= total_files * 0.5:
+                try:
+                    conn.execute("DELETE FROM sym_fts")
+                    conn.execute("INSERT INTO sym_fts(name, file, signature) SELECT name, file, signature FROM symbols")
+                except Exception:
+                    pass
 
         try:
             _resolve_references(conn)
@@ -258,11 +326,7 @@ class CodeGraph:
         if incremental:
             conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('mtimes',?)", (json.dumps(mtimes),))
         conn.commit()
-        try:
-            conn.execute("DELETE FROM sym_fts")
-            conn.execute("INSERT INTO sym_fts(name, file, signature) SELECT name, file, signature FROM symbols")
-        except Exception:
-            pass
+        
         elapsed = round(time.time() - start, 2)
         conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", ("last_index", str(time.time())))
         conn.commit()
@@ -270,6 +334,8 @@ class CodeGraph:
         summary = f"索引完成：{stats['files']} 文件, {stats['symbols']} 符号, {stats['edges']} 边, 耗时 {elapsed}s"
         if stats["skipped"]:
             summary += f", {stats['skipped']} 跳过"
+        if incremental and changed_count < total_files:
+            summary += f" (增量: {changed_count}/{total_files} 文件变更)"
         result: dict = {"ok": True, "summary": summary, "stats": stats}
         if progress_log:
             result["progress_log"] = progress_log
@@ -393,6 +459,7 @@ class CodeGraph:
                 symbols[i]["source"] = sr[0]
         rmap = self._build_relationship_map(conn, [s["name"] for s in symbols])
         grouped = self._build_grouped_by_file(conn, symbols)
+
         return {"ok": True, "found": True, "query_type": "explore",
                 "summary": f"自然语言探索 '{query}'：找到 {len(symbols)} 个相关符号。",
                 "symbols": symbols, "relationship_map": rmap, "grouped_by_file": grouped,
@@ -711,7 +778,9 @@ def _row_to_dict(r) -> dict:
     raw_source = (r[5] or "") if len(r) > 5 else ""
     truncated = CodeGraph._smart_truncate(raw_source)
     d = {"name": r[0], "kind": r[1], "file": r[2], "line": r[3],
-         "signature": r[4], "source": truncated["source"]}
+         "signature": r[4], "source": truncated["source"],
+         "source_truncated": truncated["source_truncated"],
+         "total_lines": truncated["total_lines"]}
     if len(r) > 6 and r[6]:
         d["visibility"] = r[6]
     if len(r) > 7 and r[7]:
@@ -731,6 +800,25 @@ def _extract_file(filepath: str, suffix: str) -> tuple[list[dict], list[dict]]:
         except Exception:
             pass
     return [], []
+
+
+def _extract_file_worker(args: tuple) -> tuple[str, str, float, list[dict], list[dict]]:
+    """Worker function for parallel parsing."""
+    fpath_str, suffix, root_str = args
+    fpath = Path(fpath_str)
+    try:
+        symbols, edges = _extract_file(fpath_str, suffix)
+        try:
+            rp = str(fpath.relative_to(root_str)).replace("\\", "/")
+        except ValueError:
+            rp = str(fpath)
+        return (rp, suffix, fpath.stat().st_mtime, symbols, edges)
+    except Exception:
+        try:
+            rp = str(fpath.relative_to(root_str)).replace("\\", "/")
+        except ValueError:
+            rp = str(fpath)
+        return (rp, suffix, fpath.stat().st_mtime, [], [])
 
 
 # ── Python AST ───────────────────────────────────────
@@ -765,7 +853,7 @@ def _extract_python(filepath: str) -> tuple[list[dict], list[dict]]:
                 pass
             symbols.append({"name": fn, "kind": "method" if self._current_cls else "function",
                            "line": node.lineno, "signature": sig,
-                           "source": (py_ast.get_source_segment(source, node) or "")[:500],
+                           "source": (py_ast.get_source_segment(source, node) or "")[:6000],
                            "doc": py_ast.get_docstring(node) or "",
                            "visibility": "public" if not node.name.startswith("_") else "private"})
             edges.extend(_py_calls(node, source, fn))
@@ -789,7 +877,7 @@ def _extract_python(filepath: str) -> tuple[list[dict], list[dict]]:
                 pass
             symbols.append({"name": fn, "kind": "method" if self._current_cls else "function",
                            "line": node.lineno, "signature": sig,
-                           "source": (py_ast.get_source_segment(source, node) or "")[:500],
+                           "source": (py_ast.get_source_segment(source, node) or "")[:6000],
                            "doc": py_ast.get_docstring(node) or "",
                            "visibility": "public" if not node.name.startswith("_") else "private",
                            "is_async": 1})
@@ -1031,7 +1119,7 @@ def _ts_extract_import_path(node, source) -> str | None:
             if child.type == "import_path":
                 for gc in child.children:
                     if gc.type in ("string_literal", "interpreted_string_literal", "raw_string_literal"):
-                        return text(gc).strip("\"`'")
+                        return text(gc).strip("\"'`")
     # Rust: use std::collections::HashMap
     if t == "use_declaration":
         parts = _ts_collect_identifiers(node)
@@ -1074,28 +1162,38 @@ def _resolve_references(conn):
             if len(candidates) == 1:
                 conn.execute("UPDATE edges SET to_sym=?, resolved=1 WHERE id=?", (candidates[0], eid))
 
-    # Phase 2: cross-file import resolution
+    # Phase 2: cross-file import resolution (optimized: batch resolve)
+    from collections import defaultdict as dd2
+    file_imports: dict[str, list[str]] = dd2(list)
+    all_imports = conn.execute("SELECT file, to_sym FROM edges WHERE kind='imports'").fetchall()
+    for f, imp in all_imports:
+        file_imports[f].append(imp)
+    
+    # Build a lookup: (import_prefix, short_name) -> set of candidate full names
+    # This avoids N*M individual SQL queries
+    import_startswith_map: dict[tuple[str, str], list[str]] = dd2(list)
+    all_symbol_names = [r[0] for r in conn.execute("SELECT name FROM symbols").fetchall()]
+    for qn in all_symbol_names:
+        short = qn.rsplit(".", 1)[-1]
+        # For each possible import that matches this symbol's package prefix
+        for i in range(1, len(qn.split("."))):
+            prefix = ".".join(qn.split(".")[:i])
+            import_startswith_map[(prefix, short)].append(qn)
+    
     unresolved = conn.execute(
         "SELECT e.id, e.from_sym, e.to_sym, s.file "
         "FROM edges e JOIN symbols s ON s.name=e.from_sym "
-        "WHERE e.kind='calls' AND e.resolved=0"
+        "WHERE e.kind='calls' AND e.resolved=0 LIMIT 10000"
     ).fetchall()
-    file_imports: dict[str, list[str]] = {}
-    all_imports = conn.execute("SELECT file, to_sym FROM edges WHERE kind='imports'").fetchall()
-    for f, imp in all_imports:
-        file_imports.setdefault(f, []).append(imp)
-
+    
     for eid, from_sym, to_sym, from_file in unresolved:
         if from_file not in file_imports:
             continue
         candidates = set()
         for imp in file_imports[from_file]:
-            rows = conn.execute(
-                "SELECT name FROM symbols WHERE name=? OR name LIKE ?",
-                (f"{imp}.{to_sym}", f"{imp}.%.{to_sym}"),
-            ).fetchall()
-            for (qn,) in rows:
-                candidates.add(qn)
+            key = (imp, to_sym)
+            if key in import_startswith_map:
+                candidates.update(import_startswith_map[key])
         if len(candidates) == 1:
             conn.execute("UPDATE edges SET to_sym=?, resolved=1 WHERE id=?", (candidates.pop(), eid))
 

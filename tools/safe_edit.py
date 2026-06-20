@@ -137,6 +137,7 @@ def edit(
 
     # 1. 备份（在任何修改之前）
     backup_root = _backup_dir()
+    backup_root.mkdir(parents=True, exist_ok=True)  # 先创建，确保 disk_usage 路径存在
     try:
         usage = shutil.disk_usage(backup_root)
         if usage.free < 100 * 1024 * 1024:
@@ -146,7 +147,6 @@ def edit(
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     backup_path = backup_root / f"{p.name}.{ts}.bak"
     try:
-        backup_root.mkdir(parents=True, exist_ok=True)
         shutil.copy2(filepath, str(backup_path))
     except OSError as e:
         return {"ok": False, "error": f"无法创建备份：{e}"}

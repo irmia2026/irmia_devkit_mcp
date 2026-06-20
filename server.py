@@ -30,7 +30,7 @@ _cfg.set_config(
 # ── 导入工具函数 ──────────────────────────────────────
 from tools.safe_edit import edit as _safe_edit, list_backups as _safe_backups, rollback as _safe_rollback
 from tools.safe_write import write as _safe_write
-from tools.file_patch import patch as _file_patch
+from tools.file_patch import patch as _file_patch, preview as _file_preview
 from tools.multi_edit import run as _multi_edit
 from tools.syntax_check import check as _syntax_check
 from tools.lint_runner import run as _lint_runner
@@ -59,7 +59,7 @@ from tools.dep_scan import scan as _dep_scan
 from tools.db_query import query as _db_query
 from tools.file_remove import remove as _file_remove
 from tools.file_diff import compare as _file_diff
-from tools.file_read import read as _file_read
+from tools.safe_read import read as _safe_read
 from tools.es_search import search as _es_search
 from tools.file_hash import compute as _file_hash
 from tools.file_zip import compress as _file_zip, extract as _file_unzip
@@ -84,10 +84,15 @@ from tools.git_changelog import changelog as _git_changelog
 from tools.md_strip import strip as _md_strip
 from tools.log_parse import parse as _log_parse
 from tools.config_diff import diff as _config_diff
+from tools.op_log import query as _op_log_query
+from tools.proc_list import list_processes as _proc_list
+from tools.sys_snapshot import snapshot as _sys_snapshot
+from tools.disk_info import info as _disk_info
+from tools.tool_stats import snapshot as _tool_stats
 
 mcp = FastMCP(
     "irmia-devkit",
-    instructions="弥亚开发工具箱 MCP — 安全代码编辑、Git/GitHub、搜索、测试、代码智能、网络、文件、编码、时间、文本处理。为仅有 shell 的 bare agent 提供全面且安全的开发工具集。",
+    instructions="弥亚开发工具箱 MCP — 安全代码编辑、Git/GitHub、搜索、测试、代码智能、网络、文件、编码、时间、文本处理、系统信息。为仅有 shell 的 bare agent 提供全面且安全的开发工具集。",
 )
 
 
@@ -96,7 +101,7 @@ def _json(result: dict) -> str:
 
 
 # ═══════════════════════════════════════════════════════
-# 🔒 安全编辑链 (7)
+# 🔒 安全编辑链 (10)
 # ═══════════════════════════════════════════════════════
 
 @mcp.tool()
@@ -168,6 +173,19 @@ def file_patch(filepath: str, old: str, new: str, replace_all: bool = False) -> 
 
 
 @mcp.tool()
+def file_preview(filepath: str, old: str, new: str, replace_all: bool = False) -> str:
+    """预览 file_patch 的替换效果（dry-run diff），不实际修改文件。
+
+    Args:
+        filepath: 文件路径
+        old: 旧文本
+        new: 新文本
+        replace_all: 是否替换所有匹配
+    """
+    return _json(_file_preview(filepath, old, new, replace_all=replace_all))
+
+
+@mcp.tool()
 def multi_edit(edits: list, syntax_check: bool = True) -> str:
     """跨文件原子编辑：所有编辑在内存中完成，全成功才一次写入磁盘。任一文件写入失败 → 全量回滚所有文件。
 
@@ -197,6 +215,21 @@ def lint_runner(filepath: str, linter: str = "auto") -> str:
         linter: linter 名称，auto=自动选择
     """
     return _json(_lint_runner(filepath, linter=linter))
+
+
+@mcp.tool()
+def test_runner(project_dir: str = ".", test_cmd: str = "", timeout: int = 120, filepath: str = "") -> str:
+    """统一测试运行器。自动检测框架并运行。
+
+    支持: pytest (Python), go test (Go), cargo test (Rust), jest/npm test (JS/TS)
+
+    Args:
+        project_dir: 项目目录
+        test_cmd: 自定义测试命令，空=自动检测
+        timeout: 超时秒数
+        filepath: 限定测试文件，空=全部
+    """
+    return _json(_test_runner(filepath=filepath or "", project_dir=project_dir, test_cmd=test_cmd, timeout=timeout))
 
 
 # ═══════════════════════════════════════════════════════
@@ -458,20 +491,48 @@ def http_download(url: str, path: str, overwrite: bool = False, timeout: int = 6
 
 
 # ═══════════════════════════════════════════════════════
-# 📁 文件系统 (9)
+# 📁 文件系统 (12)
 # ═══════════════════════════════════════════════════════
 
 @mcp.tool()
-def file_read(filepath: str, start_line: int = 0, end_line: int = 0, encoding: str = "") -> str:
-    """读取文件内容（带行号）。编辑前必调——LLM 需要看到文件内容才能构造 safe_edit 的 old 参数。
+def safe_read(
+    path: str,
+    start_line: int = 0,
+    end_line: int = 0,
+    max_lines: int = 0,
+    offset: int = 0,
+    limit_bytes: int = 0,
+    encoding: str = "auto",
+    mode: str = "auto",
+    head: int = 0,
+    tail: int = 0,
+    include_metadata: bool = True,
+) -> str:
+    """增强版安全文件读取：编码自动检测、二进制/hex、head/tail、行号范围、代码骨架。
+    替代旧版 file_read，编辑前必调。
 
     Args:
-        filepath: 文件路径
-        start_line: 起始行号（1-based，0=从头）。只设 end_line 时读前 N 行
+        path: 文件路径
+        start_line: 起始行号（1-based，0=从头）
         end_line: 结束行号（1-based，0=到尾）
-        encoding: 强制编码，空=自动检测 UTF-8→GBK
+        max_lines: 最大返回行数（0=使用工具内部默认值）
+        offset: 字节偏移（hex 模式）
+        limit_bytes: 字节限制（hex 模式）
+        encoding: 编码：auto / utf-8 / gbk / latin-1
+        mode: 模式：auto / text / binary / hex / skeleton
+        head: 读取前 N 行（优先级高于 start_line/end_line）
+        tail: 读取后 N 行（优先级高于 start_line/end_line）
+        include_metadata: 是否包含文件元信息
     """
-    return _json(_file_read(filepath, start_line=start_line, end_line=end_line, encoding=encoding))
+    kwargs = {"path": path, "start_line": start_line, "end_line": end_line, "encoding": encoding,
+              "mode": mode, "head": head, "tail": tail, "include_metadata": include_metadata}
+    if max_lines > 0:
+        kwargs["max_lines"] = max_lines
+    if offset > 0:
+        kwargs["offset"] = offset
+    if limit_bytes > 0:
+        kwargs["limit_bytes"] = limit_bytes
+    return _json(_safe_read(**kwargs))
 
 
 @mcp.tool()
@@ -562,6 +623,32 @@ def file_hash(filepath: str, algo: str = "sha256") -> str:
 
 
 @mcp.tool()
+def file_zip(source: str, output: str = "") -> str:
+    """ZIP 压缩。压缩目录或文件到 output zip。
+
+    Args:
+        source: 要压缩的文件或目录路径
+        output: 输出 zip 路径，空则使用 source + ".zip"
+    """
+    if not output:
+        output = f"{source}.zip"
+    return _json(_file_zip(files_or_dir=[source], output=output))
+
+
+@mcp.tool()
+def file_unzip(zip_file: str, output_dir: str = "") -> str:
+    """ZIP 解压（Zip-slip 防护）。output_dir 空则解压到 zip 文件所在目录。
+
+    Args:
+        zip_file: zip 文件路径
+        output_dir: 解压目标目录
+    """
+    if not output_dir:
+        output_dir = str(Path(zip_file).parent)
+    return _json(_file_unzip(zip_file=zip_file, output_dir=output_dir))
+
+
+@mcp.tool()
 def file_remove(path: str, confirm: bool = False, max_items: int = 50) -> str:
     """安全删除文件或目录（路径穿越防护 + 系统目录黑名单）。
 
@@ -574,20 +661,9 @@ def file_remove(path: str, confirm: bool = False, max_items: int = 50) -> str:
 
 
 @mcp.tool()
-def file_zip(action: str, source: str = "", output: str = "") -> str:
-    """ZIP 压缩/解压 (Zip-slip 防护).
-
-    Args:
-        action: compress | extract
-        source: 压缩时=文件/目录路径，解压时=zip文件路径
-        output: compress=输出zip路径，extract=解压目标目录
-    """
-    if action == "compress":
-        return _json(_file_zip(files_or_dir=[source], output=output))
-    elif action == "extract":
-        return _json(_file_unzip(zip_file=source, output_dir=output))
-    else:
-        return _json({"ok": False, "error": f"unknown action: {action}"})
+def disk_info() -> str:
+    """获取磁盘分区使用情况。"""
+    return _json(_disk_info())
 
 
 @mcp.tool()
@@ -606,8 +682,8 @@ def config_diff(file1: str, file2: str) -> str:
 # ═══════════════════════════════════════════════════════
 
 @mcp.tool()
-def shell_exec(cmd: str, project_dir: str = ".", timeout: int = 120, dry_run: bool = False, allow_high_risk: bool = False) -> str:
-    """受限命令执行（白名单 + 高风险分级）。
+def shell_exec(cmd: str, project_dir: str = ".", timeout: int = 120, max_lines: int = 500, dry_run: bool = False, allow_high_risk: bool = False) -> str:
+    """受限命令执行（白名单 + 高风险分级 + 路径参数沙箱校验）。
 
     白名单: npm test/run/build/lint/install, npx jest/vitest/tsc/eslint,
     cargo test/build/check/clippy/fmt, go test/build/vet/fmt,
@@ -617,25 +693,11 @@ def shell_exec(cmd: str, project_dir: str = ".", timeout: int = 120, dry_run: bo
         cmd: 命令字符串（禁止 | ; && || 等 shell 控制字符）
         project_dir: 项目目录（必须在当前工作目录下）
         timeout: 超时秒数
+        max_lines: 输出最大行数
         dry_run: True=仅预览不执行
         allow_high_risk: True=允许 pip install/make 等高风险命令
     """
-    return _json(_shell_exec(cmd=cmd, project_dir=project_dir, timeout=timeout, dry_run=dry_run, allow_high_risk=allow_high_risk))
-
-
-@mcp.tool()
-def test_runner(project_dir: str = ".", test_cmd: str = "", timeout: int = 120, filepath: str = "") -> str:
-    """统一测试运行器。自动检测框架并运行。
-
-    支持: pytest (Python), go test (Go), cargo test (Rust), jest/npm test (JS/TS)
-
-    Args:
-        project_dir: 项目目录
-        test_cmd: 自定义测试命令，空=自动检测
-        timeout: 超时秒数
-        filepath: 限定测试文件，空=全部
-    """
-    return _json(_test_runner(filepath=filepath or "", project_dir=project_dir, test_cmd=test_cmd, timeout=timeout))
+    return _json(_shell_exec(cmd=cmd, project_dir=project_dir, timeout=timeout, max_lines=max_lines, dry_run=dry_run, allow_high_risk=allow_high_risk))
 
 
 # ═══════════════════════════════════════════════════════
@@ -743,7 +805,7 @@ def symbol_rename(old_name: str, new_name: str, project_dir: str = ".", dry_run:
 
 
 # ═══════════════════════════════════════════════════════
-# 📊 端口与诊断 (2)
+# 📊 系统信息 (4)
 # ═══════════════════════════════════════════════════════
 
 @mcp.tool()
@@ -761,8 +823,30 @@ def port_check(action: str = "check", host: str = "127.0.0.1", port: int = 7860,
     return _json(_port_check(host=host, port=port))
 
 
+@mcp.tool()
+def proc_list(filter_name: str = "") -> str:
+    """列出系统进程。可通过 filter_name 按名称模糊过滤。
+
+    Args:
+        filter_name: 进程名过滤子串，空=全部
+    """
+    return _json(_proc_list(filter_name=filter_name or None))
+
+
+@mcp.tool()
+def sys_snapshot() -> str:
+    """获取系统快照：CPU/内存/进程/开机时间等。"""
+    return _json(_sys_snapshot())
+
+
+@mcp.tool()
+def tool_stats() -> str:
+    """获取工具调用统计（当前进程内计数）。"""
+    return _json(_tool_stats())
+
+
 # ═══════════════════════════════════════════════════════
-# 📝 文本处理 (9)
+# 📝 文本处理 (8)
 # ═══════════════════════════════════════════════════════
 
 @mcp.tool()
@@ -915,7 +999,7 @@ def time(action: str = "now", value: str = "", ts: int = 0, ms: bool = False, is
 
 
 # ═══════════════════════════════════════════════════════
-# 🧩 扩展 (6)
+# 🧩 扩展 (7)
 # ═══════════════════════════════════════════════════════
 
 @mcp.tool()
@@ -971,6 +1055,20 @@ def semver_compare(v1: str, v2: str) -> str:
         v2: 版本号 2
     """
     return _json(_semver_compare(v1=v1, v2=v2))
+
+
+@mcp.tool()
+def op_log(action: str = "recent", limit: int = 10, file: str = "", tool: str = "", session_id: str = "") -> str:
+    """查询操作日志（当前 MCP 服务端本地 SQLite 日志）。
+
+    Args:
+        action: recent | errors | file | stats
+        limit: 最大返回条数（1-100）
+        file: action=file 时按文件路径过滤
+        tool: action=recent 时按工具名过滤
+        session_id: action=recent 时按会话 ID 过滤
+    """
+    return _json(_op_log_query(action=action, limit=limit, file=file, tool=tool, session_id=session_id))
 
 
 # ═══════════════════════════════════════════════════════

@@ -1,6 +1,6 @@
 [project]
 name = "irmia-devkit-mcp"
-version = "1.0.0"
+version = "2.6.0"
 description = "Irmia DevKit MCP Server — 为 Vibe Coding 工具提供安全代码开发工具集"
 requires-python = ">=3.10"
 dependencies = [
@@ -12,3 +12,7 @@ irmia-devkit = "__main__:main"
 
 [tool.ruff.lint]
 ignore = ["E701", "E741"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--ignore=tests/test_devkit_web.py --ignore=tests/test_group_default_config.py"

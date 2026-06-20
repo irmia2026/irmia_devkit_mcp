@@ -25,7 +25,7 @@ def check(host: str = "127.0.0.1", port: int = 7860) -> dict:
             "proposal": f"端口 {port} 未监听",
             "evidence": {"host": host, "port": port, "timeout": 3},
             "options": ["确认服务是否已启动", "检查端口号是否正确", "用 proc_list 确认进程"],
-            "next_call": {"tool": "shell_exec", "params": {"cmd": "tasklist", "filter_name": str(port)}},
+            "next_call": {"tool": "proc_list", "params": {"filter_name": str(port)}},
         }
     finally:
         if sock:

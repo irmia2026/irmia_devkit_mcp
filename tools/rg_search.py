@@ -21,6 +21,34 @@ _SKIP_DIRS = {
 # Python fallback 扫描文件上限（防止超时）
 _MAX_FILES_SCANNED = 5000
 
+# ReDoS 防护
+_MAX_PATTERN_LEN = 1000
+_MAX_TOTAL_SEARCH_STEPS = 500_000
+
+
+def _has_nested_quantifiers(pattern: str) -> bool:
+    """检测常见灾难性回溯模式，如 (a+)+、(a*)*、(a?)+ 等。"""
+    # 直接匹配 (X+)+、(X*)*、(X?)+ 及等价变体
+    stack = []
+    for ch in pattern:
+        if ch == '(':
+            stack.append([])
+        elif ch == ')':
+            if not stack:
+                continue
+            inner = stack.pop()
+            if not inner:
+                continue
+            # 内部是否包含量词
+            has_inner_quant = any(q in inner for q in '+*?')
+            # 括号后紧跟的量词
+            # 这里通过后续字符判断，需要向前看：暂存在解析循环外处理
+        elif stack:
+            stack[-1].append(ch)
+
+    # 更简单可靠：用正则检测 ( [^()]* [+*?] [^()]* ) [+*?]
+    return bool(re.search(r'\([^()]*[+\*?][^()]*\)[+\*?]', pattern))
+
 
 def _find_rg() -> str | None:
     """查找 rg 可执行文件路径，未找到返回 None。"""
@@ -94,6 +122,24 @@ def _python_fallback(
     list_files: bool,
 ) -> dict:
     """Python 纯标准库内容搜索 fallback。"""
+    # ReDoS 前置拦截
+    if len(pattern) > _MAX_PATTERN_LEN:
+        return proposal_reply(
+            False,
+            f"pattern 长度超过 {_MAX_PATTERN_LEN}，请缩短搜索模式",
+            error="pattern_too_long",
+            evidence={"length": len(pattern), "max": _MAX_PATTERN_LEN},
+            options=["缩短 pattern", "使用更精确的关键字"],
+        )
+    if _has_nested_quantifiers(pattern):
+        return proposal_reply(
+            False,
+            "pattern 包含嵌套量词（如 (a+)+），可能引发灾难性回溯，请简化",
+            error="nested_quantifiers",
+            evidence={"pattern": pattern},
+            options=["移除嵌套量词", "使用字面量搜索"],
+        )
+
     flags = 0 if case_sensitive else re.IGNORECASE
     if whole_word:
         pattern = rf"\b{re.escape(pattern)}\b"
@@ -105,6 +151,7 @@ def _python_fallback(
     matches = []
     files_searched = 0
     truncated = False
+    search_steps = 0
 
     for root, dirs, files in os.walk(search_path):
         # 跳过隐藏/非代码目录
@@ -126,6 +173,10 @@ def _python_fallback(
             try:
                 with open(fpath, "r", encoding="utf-8", errors="replace") as f:
                     for lineno, line in enumerate(f, 1):
+                        search_steps += 1
+                        if search_steps > _MAX_TOTAL_SEARCH_STEPS:
+                            truncated = True
+                            break
                         if compiled.search(line):
                             matches.append({
                                 "file": fpath,
@@ -164,6 +215,7 @@ def _python_fallback(
         "matches": matches,
         "truncated": truncated,
         "files_searched": files_searched,
+        "search_steps": search_steps,
         "note": "rg 未安装，使用 Python 扫描（较慢）。建议: winget install BurntSushi.ripgrep.MSVC 或 apt install ripgrep",
     }
     return result

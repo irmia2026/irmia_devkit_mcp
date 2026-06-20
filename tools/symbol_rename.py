@@ -192,7 +192,9 @@ def run(old: str, new: str, project_dir: str = ".", dry_run: bool = True, confir
             f"Review the dry_run diffs first, then retry with confirm_multi_file=true.",
             error="cross_file_rename",
             evidence={"files_changed": result.get("files_changed", []),
-                      "files_count": len(result.get("files_changed", []))},
+                      "files_count": len(result.get("files_changed", [])),
+                      "diffs": result.get("diffs", []),
+                      "total_refs": result.get("total_refs", 0)},
             options=["dry_run=true to review diffs", "confirm_multi_file=true to proceed", "cancel"],
         )
 

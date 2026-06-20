@@ -1,7 +1,7 @@
 {
   "name": "irmia-devkit-mcp",
-  "version": "1.0.0",
-  "description": "弥亚开发工具箱 MCP — 57 个安全开发工具",
+  "version": "2.6.0",
+  "description": "弥亚开发工具箱 MCP — 64 个安全开发工具",
   "main": "server.py",
   "bin": {
     "irmia-devkit": "./bin/irmia-devkit.cmd",
