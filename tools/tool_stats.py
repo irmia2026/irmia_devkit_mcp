@@ -4,16 +4,19 @@ tool_stats — 工具调用统计。
 """
 
 from collections import defaultdict
+import threading
 import time
 
 _stats: dict[str, dict] = defaultdict(lambda: {"count": 0, "last": 0.0})
+_lock = threading.Lock()
 
 
 def record(name: str) -> None:
     try:
-        entry = _stats[name]
-        entry["count"] += 1
-        entry["last"] = time.time()
+        with _lock:
+            entry = _stats[name]
+            entry["count"] += 1
+            entry["last"] = time.time()
     except Exception:
         pass
 
