@@ -65,6 +65,17 @@ def safe_edit(filepath: str, old: str, new: str, ...) -> str:
 2. **No AstrBot dependency** — This is a standalone MCP server. The tool implementations are adapted to work without the AstrBot plugin framework.
 3. **`safe_read` replaces `file_read`** — Enhanced file reading with hex/skeleton/head/tail modes, no line-number-polluted content.
 4. **`proposal_reply`** — Structured error protocol guides LLM to next action instead of crashing.
+5. **Local-only by design** — The MCP server refuses to bind to non-localhost addresses. `es_search`/`rg_search`/`safe_edit` etc. all operate on the local filesystem; sharing this server remotely would expose the host's file paths and operation logs. Use `stdio` mode for single-machine Vibe Coding, or `--http` (localhost-only) for local browser-based MCP clients.
+
+## Deployment
+
+| Mode | Command | Scope |
+|------|---------|-------|
+| stdio | `python server.py` | Single-machine, CLI agent |
+| HTTP (local) | `python server.py --http` | `http://127.0.0.1:8000/mcp`, browser clients |
+| ❌ Remote | `--host 0.0.0.0` | **Rejected** — prints error and exits |
+
+The `--host` parameter only accepts `127.0.0.1`, `localhost`, or `::1`. This is enforced at startup. All file-system tools (`safe_edit`, `es_search`, `rg_search`, `safe_read`, etc.) operate on the machine running the server — sharing it remotely would leak host file paths and audit data.
 
 ## Dependencies
 

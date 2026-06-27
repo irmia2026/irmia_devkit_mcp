@@ -1145,7 +1145,13 @@ def main():
     args = ap.parse_args()
 
     if args.http:
-        print(f"Irmia DevKit MCP HTTP -> http://{args.host}:{args.port}/mcp")
+        if args.host not in ("127.0.0.1", "localhost", "::1"):
+            print(
+                f"❌ irmia-devkit-mcp 仅支持本地部署。"
+                f"不允许 --host={args.host}（仅允许 127.0.0.1 / localhost / ::1）。"
+            )
+            sys.exit(1)
+        print(f"Irmia DevKit MCP HTTP -> http://{args.host}:{args.port}/mcp  (本地专用)")
         mcp.settings.host = args.host
         mcp.settings.port = args.port
         mcp.run(transport="sse")
