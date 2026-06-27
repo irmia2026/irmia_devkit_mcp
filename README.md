@@ -1,125 +1,137 @@
 # Irmia DevKit MCP
 
-为 Vibe Coding 工具提供 64 个安全开发工具。
+为 Vibe Coding 工具提供 **65** 个安全开发工具 — MCP 协议实现。
 
-## 接入
-
-与 Playwright MCP 相同的模式——npx 自动下载安装：
-
-```json
-{
-  "mcpServers": {
-    "irmia-devkit": {
-      "command": "npx",
-      "args": ["irmia-devkit-mcp", "--http", "--port", "8000"]
-    }
-  }
-}
-```
-
-或直接启动服务端，客户端用 name + URL 接入：
-
-```bash
-npx irmia-devkit-mcp --http --port 8000
-```
-
-```json
-{
-  "mcpServers": {
-    "irmia-devkit": {
-      "name": "irmia-devkit",
-      "url": "http://127.0.0.1:8000/sse"
-    }
-  }
-}
-```
-
-远程部署带 Token：
-
-```json
-{
-  "mcpServers": {
-    "irmia-devkit": {
-      "name": "irmia-devkit",
-      "url": "https://your-server.com/sse",
-      "headers": {
-        "Authorization": "Bearer ${IRMIA_TOKEN}"
-      }
-    }
-  }
-}
-```
+继承自 [`irmia_devkit_open`](https://github.com/irmia2026/irmia_devkit_open) v2.6.0，包装为 MCP Server。
 
 ## 安装
 
-| 方式 | 命令 |
-|------|------|
-| **uv** | `uvx --from git+https://github.com/irmia2026/irmia_devkit_mcp.git irmia-devkit --http --port 8000` |
-| **pip** | `pip install git+https://github.com/irmia2026/irmia_devkit_mcp.git && irmia-devkit --http --port 8000` |
-| **npx** | `npx github:irmia2026/irmia_devkit_mcp --http --port 8000` |
+### 方式 1：mcp run（推荐）
 
-启动脚本会自动 `pip install mcp`，并报告可选外部程序的安装状态。
+```bash
+# clone 仓库
+git clone https://github.com/irmia2026/irmia_devkit_mcp.git
+cd irmia_devkit_mcp
 
-## 支持的客户端
+# 安装依赖
+pip install mcp
 
-| 客户端 | 接入方式 |
-|--------|---------|
-| **Cursor** | Settings → MCP → Add Server: name + url |
-| **Claude Desktop** | `claude_desktop_config.json` |
-| **VS Code** | `settings.json` `mcpServers` |
-| **Windsurf** | `mcp_config.json` |
-| **Cline** | `cline.mcpServers` |
-| **AstrBot** | `mcp_servers.json` |
-| **Reasonix** | `reasonix.toml` `mcp_servers` |
+# 直接运行
+mcp run server.py
+```
 
-全部填 `name: irmia-devkit, url: http://host:port/sse`。
+### 方式 2：Github + uv（无需 clone）
 
-## 依赖
+在 MCP 客户端配置中添加：
 
-核心依赖仅 `mcp>=1.0.0`（启动脚本自动安装）。
+```json
+{
+  "mcpServers": {
+    "irmia-devkit": {
+      "command": "uvx",
+      "args": ["mcp", "run", "https://raw.githubusercontent.com/irmia2026/irmia_devkit_mcp/main/server.py"]
+    }
+  }
+}
+```
 
-49 个工具为 Python 标准库，无需任何外部程序。8 个工具在检测到外部程序时自动启用加速，未检测到时降级运行或给出安装指引：
+### 方式 3：npm install（需要 Node.js）
 
-| 工具 | 外部程序 | 检测到 | 未检测到 |
-|------|---------|--------|----------|
-| `rg_search` | ripgrep | 毫秒级搜索 | Python os.walk 扫描 |
-| `es_search` | Everything/locate/fd | 毫秒级文件名搜索 | Python os.walk 扫描 |
-| `gh_pr/issue/release/repo` | GitHub CLI | 完整 GitHub 操作 | 返回安装指引 |
-| `lint_runner` | ruff/pylint/eslint | 代码质量检查 | 返回安装指引 |
-| `syntax_check` | go/nim/node | 多语言语法检查 | Python 可用，其他 skipped |
-| `test_runner` | go/cargo/node | 多框架测试 | 回退 pytest |
-| `code_index` | tree-sitter-* | 多语言符号索引 | Python ast 可用 |
-| `html_extract` | beautifulsoup4 | HTML 解析 | 返回安装指引 |
+```bash
+npm install irmia-devkit-mcp
+npx irmia-devkit
+```
 
-## 工具总览 (64)
+### 方式 4：HTTP 模式
+
+```bash
+python server.py --http --port 8000
+# 或
+mcp run server.py --transport sse --port 8000
+```
+
+## MCP 客户端配置
+
+### Cursor
+
+`~/.cursor/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "irmia-devkit": {
+      "command": "uv",
+      "args": ["run", "--with", "mcp", "mcp", "run", "/path/to/irmia_devkit_mcp/server.py"]
+    }
+  }
+}
+```
+
+### Claude Desktop
+
+`~/.claude/settings.json`:
+```json
+{
+  "mcpServers": {
+    "irmia-devkit": {
+      "command": "python",
+      "args": ["/path/to/irmia_devkit_mcp/server.py"]
+    }
+  }
+}
+```
+
+### 更多客户端
+
+| 客户端 | 配置方式 |
+|--------|----------|
+| Windsurf | File → Settings → MCP Servers |
+| Continue | `~/.continue/config.json` |
+| Cline | VSCode 扩展设置 → MCP Server → Add |
+| Aider | `aider --mcp-servers irmia-devkit` |
+
+## 前置依赖
+
+| 工具 | 依赖 | 未安装时 |
+|------|------|----------|
+| `es_search` | Everything + es.exe (Win) / locate / fd | 错误提示或 Python os.walk 扫描 |
+| `gh_pr` / `gh_issue` / `gh_release` / `gh_repo` | GitHub CLI (`gh`) | 返回错误提示 |
+| `html_extract` | `beautifulsoup4`，lxml 可选 | 缺 bs4 报错，缺 lxml 回退 |
+| `syntax_check` (Nim/Go/JS/TS) | 对应编译器 | 跳过 |
+| `lint_runner` | ruff / pylint / eslint | 安装提示 |
+| `rg_search` | ripgrep（可选） | 降级纯标库扫描 |
+| `code_index` (多语言) | tree-sitter（可选） | Python 零依赖；其他跳过 |
+
+其余 50+ 工具为 Python 标准库实现，无外部依赖。
+
+## 工具总览 (65)
 
 | # | 分组 | 工具 |
 |:--:|------|------|
 | 10 | 安全编辑链 | `safe_edit` `safe_write` `safe_backups` `safe_rollback` `file_patch` `file_preview` `syntax_check` `lint_runner` `test_runner` `multi_edit` |
 | 11 | Git & GitHub | `git_status` `git_diff` `git_log` `git_commit` `git_branch` `git_remote` `git_push` `git_changelog` `gh_pr` `gh_issue` `gh_release` `gh_repo` |
-| 12 | 文件系统 | `safe_read` `es_search` `rg_search` `dir_tree` `dir_list` `file_diff` `file_hash` `file_zip` `file_unzip` `file_remove` `disk_info` `config_diff` |
+| 13 | 文件系统 | `safe_read` `es_search` `rg_search` `dir_tree` `dir_list` `file_diff` `file_hash` `file_zip` `file_unzip` `file_move` `file_remove` `disk_info` `config_diff` |
 | 4 | 系统信息 | `port_check` `proc_list` `sys_snapshot` `tool_stats` |
 | 3 | 网络 | `http_get` `http_post` `http_download` |
 | 1 | 执行 | `shell_exec` |
 | 6 | 代码智能 | `code_index` `code_explore` `code_pack` `code_diff_impact` `code_status` `symbol_rename` |
 | 8 | 文本处理 | `html_extract` `json_query` `text_filter` `diff_strings` `csv_parse` `csv_gen` `md_strip` `log_parse` |
-| 7 | 编码/时间/扩展 | `encode_decode` `time` `db_query` `dep_scan` `project_init` `uuid_gen` `semver_compare` `op_log` |
+| 8 | 编码/时间/扩展 | `encode_decode` `time` `db_query` `dep_scan` `project_init` `uuid_gen` `semver_compare` `op_log` |
 
-## 安全
+## 设计说明
 
-- **命令注入防护**: shell 控制字符黑名单 + 命令白名单 + 高风险操作确认链
-- **SSRF 防护**: URL → IP 检查 → DNS 解析 → HTTP 重定向 四层检测
-- **路径穿越防护**: `..` 拦截 + `resolve()` 验证 + 系统目录黑名单 + ZIP slip 检测
-- **SQL 注入防护**: SELECT/PRAGMA 白名单 + 数据库级只读 + 参数化查询
+### safe_edit 流程
+备份 → 精确替换 → whitespace-tolerant 模糊匹配 → 语法检查 → 失败自动回滚。
+多处匹配时返回所有位置并用 `occurrence=N` 消歧。
 
-## 文档
+### 安全设计
+- **SSRF 四层**：IP 黑名单、内网网段拦截、SSRF 库防护、路径沙箱
+- **safe_edit 防御链**：自动备份 + 语法检查 + 原子写入 + 失败回滚
+- **shell_exec 沙箱**：命令白名单 + 路径参数沙箱 + 高风险命令分级
+- **路径穿越防护**：check_path_allowed 统一拦截
 
-| 文档 | 内容 |
-|------|------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 项目结构、启动流程、安全架构、代码智能引擎 |
-| [CHANGELOG.md](CHANGELOG.md) | 版本历史 |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 新增工具教程、返回值规范、安全检查清单 |
+### 提案协议
+部分工具在失败或歧义时返回 `{proposal, evidence, options, next_call}` 结构化信息，引导 LLM 下一步操作。
 
-## 许可
+## License
 
-AGPL 3.0
+MIT

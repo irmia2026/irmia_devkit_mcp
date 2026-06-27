@@ -1,13 +1,12 @@
 # Changelog
 
-## v2.6.0 (MCP) — 同步 open 版 v2.6.0 迭代
+## v2.6.0 (MCP) — 三次同步：file_move + op_log 参数修复 + 全工具深度修复
 
-- 同步上游 `irmia_devkit_open` 从 v1.0 到 v2.6.0 的全部迭代内容。
-- 工具数 57 → 64：新增 `safe_read`、`file_preview`、`file_unzip`、`disk_info`、`proc_list`、`sys_snapshot`、`tool_stats`、`op_log`。
-- 移除旧版 `file_read`，统一使用增强版 `safe_read`。
-- `shell_exec` 增加 `max_lines` 参数与命令参数路径沙箱校验。
-- 完整引入上游测试套件（209+ 用例）。
-- 保留 MCP 入口：`server.py`、`__main__.py`、`bin/`、`package.json`。
+- 新增 `file_move` 工具（批量移动，同分区 O(1) rename，跨分区 copy+delete）
+- `op_log` 参数 `tool` → `tool_name`（避免与框架参数冲突）
+- 同步全工具深度 review 修复：CRLF/尾随空格容错、next_call 消失修复、context 暴增优化
+- 同步上游测试品质更新
+- 工具数 64 → **65**
 
 ## v2.6.0 — 增强文件读取 + 全量安全审查修复
 

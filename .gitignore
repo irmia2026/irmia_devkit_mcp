@@ -32,3 +32,5 @@ doc_extracted.txt
 notes/
 data/
 docs/
+_debug_*
+_d*.py
