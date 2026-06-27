@@ -15,12 +15,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mcp.server.fastmcp import FastMCP
 
 from tools import config as _cfg
+from tools.auto_config import load_config, check_and_warn, print_startup_banner
+
+_mcp_config = load_config()
+check_and_warn(_mcp_config)
 
 _cfg.set_config(
     {
-        "backup_dir": os.environ.get("IRMIA_BACKUP_DIR", str(Path.home() / ".irmia" / "backups")),
-        "gh_path": os.environ.get("IRMIA_GH_PATH", ""),
-        "es_path": "",
+        "backup_dir": os.environ.get("IRMIA_BACKUP_DIR", _mcp_config.get("backup_dir", str(Path.home() / ".irmia" / "backups"))),
+        "gh_path": os.environ.get("IRMIA_GH_PATH", _mcp_config.get("gh_path", "")),
+        "es_path": os.environ.get("IRMIA_ES_PATH", _mcp_config.get("es_path", "")),
         "state_dir": "",
         "lock_dirs": [],
     },
@@ -1138,6 +1142,9 @@ def op_log(action: str = "recent", limit: int = 10, file: str = "", tool_name: s
 def main():
     """MCP 入口。默认 stdio；传 --http 则启动 HTTP 服务。"""
     import argparse
+
+    print_startup_banner(_mcp_config)
+
     ap = argparse.ArgumentParser(description="Irmia DevKit MCP Server")
     ap.add_argument("--http", action="store_true", help="以 HTTP streamable 模式启动 (默认 stdio)")
     ap.add_argument("--port", type=int, default=8000, help="HTTP 端口 (默认 8000)")
