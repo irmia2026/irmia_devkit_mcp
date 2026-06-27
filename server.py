@@ -57,7 +57,7 @@ from tools.codegraph import CodeGraph
 from tools.symbol_rename import run as _symbol_rename
 from tools.dep_scan import scan as _dep_scan
 from tools.db_query import query as _db_query
-from tools.file_remove import remove as _file_remove
+from tools.file_remove import remove as _file_remove, move as _file_move
 from tools.file_diff import compare as _file_diff
 from tools.safe_read import read as _safe_read
 from tools.es_search import search as _es_search
@@ -661,6 +661,20 @@ def file_remove(path: str, confirm: bool = False, max_items: int = 50) -> str:
 
 
 @mcp.tool()
+def file_move(sources: list, dest: str, overwrite: bool = False) -> str:
+    """批量移动文件/目录到目标目录。
+    同分区内原子 rename（O(1)），跨分区自动退化为 copy+delete。
+    避免通过 shell_exec 逐文件 mv 导致超时。
+
+    Args:
+        sources: 源文件/目录路径列表
+        dest: 目标目录路径（会自动创建）
+        overwrite: 是否覆盖目标已存在的文件
+    """
+    return _json(_file_move(sources, dest, overwrite=overwrite))
+
+
+@mcp.tool()
 def disk_info() -> str:
     """获取磁盘分区使用情况。"""
     return _json(_disk_info())
@@ -1058,17 +1072,17 @@ def semver_compare(v1: str, v2: str) -> str:
 
 
 @mcp.tool()
-def op_log(action: str = "recent", limit: int = 10, file: str = "", tool: str = "", session_id: str = "") -> str:
+def op_log(action: str = "recent", limit: int = 10, file: str = "", tool_name: str = "", session_id: str = "") -> str:
     """查询操作日志（当前 MCP 服务端本地 SQLite 日志）。
 
     Args:
         action: recent | errors | file | stats
         limit: 最大返回条数（1-100）
         file: action=file 时按文件路径过滤
-        tool: action=recent 时按工具名过滤
+        tool_name: action=recent 时按工具名过滤
         session_id: action=recent 时按会话 ID 过滤
     """
-    return _json(_op_log_query(action=action, limit=limit, file=file, tool=tool, session_id=session_id))
+    return _json(_op_log_query(action=action, limit=limit, file=file, tool_name=tool_name, session_id=session_id))
 
 
 # ═══════════════════════════════════════════════════════

@@ -11,7 +11,16 @@ from pathlib import Path
 from .config import get_config, get_plugin_dir
 from .file_patch import patch
 from .syntax_check import check as syntax_check
-from ._file_utils import read_file_with_encoding, find_closest_line, SAFE_EDIT_MAX_SIZE, align_whitespace
+from ._file_utils import (
+    read_file_with_encoding,
+    find_closest_line,
+    SAFE_EDIT_MAX_SIZE,
+    align_whitespace,
+    check_path_allowed,
+    atomic_write_text,
+    _first_existing_parent,
+    backup_name_stem,
+)
 
 
 def _backup_dir() -> Path:
@@ -19,12 +28,12 @@ def _backup_dir() -> Path:
     config = get_config()
     custom = config.get("backup_dir", "")
     if custom:
-        return Path(custom)
+        return Path(custom).resolve()
     default = Path.home() / ".irmia" / "backups"
     try:
         default.parent.mkdir(parents=True, exist_ok=True)
         return default
-    except OSError:
+    except (OSError, RuntimeError):
         root = get_plugin_dir() or Path(tempfile.gettempdir())
         return Path(root) / ".irmia" / "backups"
 
@@ -40,6 +49,16 @@ def _collect_positions(content: str, old: str) -> list[int]:
         positions.append(idx)
         pos = idx + len(old)
     return positions
+
+
+def _normalize_line_endings(s: str) -> str:
+    """统一把 \\r\\n 转成 \\n，方便跨换行风格匹配。"""
+    return s.replace("\r\n", "\n")
+
+
+def _restore_line_endings(s: str, has_crlf: bool) -> str:
+    """如果原文件是 CRLF，把结果再转回 CRLF。"""
+    return s.replace("\n", "\r\n") if has_crlf else s
 
 
 def edit(
@@ -66,14 +85,32 @@ def edit(
     if not old:
         return {"ok": False, "error": "old 参数不能为空字符串，空替换会损毁文件"}
 
+    # 路径安全校验：check_path_allowed 内部先检测原始字符串 .. 穿越，
+    # 再 resolve 后检测系统目录（含符号链接跟随）。
+    safety = check_path_allowed(filepath)
+    if safety:
+        return safety
+
     p = Path(filepath).resolve()
     filepath = str(p)
 
     if not p.exists():
         return {"ok": False, "error": f"文件不存在: {filepath}"}
 
+    if not p.is_file():
+        return {"ok": False, "error": f"路径不是文件: {filepath}"}
+
     if p.stat().st_size > SAFE_EDIT_MAX_SIZE:
         return {"ok": False, "error": "文件超过 20MB 上限，safe_edit 不支持大文件编辑。建议用外部编辑器。"}
+
+    # 检查目标文件所在分区剩余空间（防止备份成功但写入失败）
+    try:
+        write_dir = p.parent if p.parent.exists() else _first_existing_parent(p.parent)
+        usage = shutil.disk_usage(write_dir)
+        if usage.free < 100 * 1024 * 1024:
+            return {"ok": False, "error": f"目标文件所在分区磁盘空间不足（剩余 {usage.free // 1024 // 1024}MB < 100MB）"}
+    except OSError:
+        pass
 
     # 0. 读取文件内容
     try:
@@ -81,12 +118,31 @@ def edit(
     except Exception as e:
         return {"ok": False, "error": f"无法解码文件: {e}"}
 
-    # 0.1 消歧
+    # 0.1 CRLF → LF 归一化（与 file_patch / multi_edit 一致），
+    #     确保 CRLF 文件 + LF 多行 old 也能匹配
+    has_crlf = "\r\n" in content
+    if has_crlf:
+        content = _normalize_line_endings(content)
+        old = _normalize_line_endings(old)
+        new = _normalize_line_endings(new)
+
+    # 0.2 消歧
     old_count = content.count(old)
+
+    if occurrence < 0:
+        return {"ok": False, "error": "occurrence 不能为负数"}
+    if occurrence > 0 and replace_all:
+        return {
+            "ok": False,
+            "error": "occurrence 与 replace_all 不能同时使用，请只选其一",
+            "proposal": "多匹配时要么用 occurrence=N 指定单次替换，要么用 replace_all=True 替换全部",
+            "options": ["occurrence=N", "replace_all=True"],
+        }
+
     if old_count == 0:
         # P0-1: whitespace-tolerant fallback before giving up
         aligned = align_whitespace(content, old, new)
-        if aligned and not replace_all:
+        if aligned:
             old, new = aligned
             old_count = content.count(old)
             result_extra = {"whitespace_aligned": True}
@@ -128,6 +184,7 @@ def edit(
             "evidence": {"occurrence_count": old_count, "matches": positions[:20]},
             "matches": positions[:20],
             "occurrence_count": old_count,
+            **result_extra,
         }
 
     # 2. 执行替换前先校验 occurrence
@@ -145,7 +202,7 @@ def edit(
     except OSError:
         pass  # 无法检测磁盘空间，继续尝试
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    backup_path = backup_root / f"{p.name}.{ts}.bak"
+    backup_path = backup_root / f"{backup_name_stem(p)}.{ts}.bak"
     try:
         shutil.copy2(filepath, str(backup_path))
     except OSError as e:
@@ -162,11 +219,12 @@ def edit(
     if occurrence > 0 and not replace_all:
         positions = _collect_positions(content, old)
         idx = positions[occurrence - 1]
-        content = content[:idx] + new + content[idx + len(old) :]
+        new_content = content[:idx] + new + content[idx + len(old) :]
+        if has_crlf:
+            new_content = _restore_line_endings(new_content, has_crlf)
         try:
-            with open(filepath, "w", encoding=encoding, newline="") as f:
-                f.write(content)
-        except OSError as e:
+            atomic_write_text(filepath, new_content, encoding)
+        except (OSError, UnicodeError) as e:
             return {"ok": False, "error": f"无法写入文件：{e}"}
         result["replaced"] = 1
         result["occurrence"] = occurrence
@@ -178,6 +236,8 @@ def edit(
                 "ok": False,
                 "error": patch_result.get("error", "patch 失败"),
                 "rolled_back": False,
+                "proposal": f"备份保留在 {backup_path}，可手动恢复或调用 rollback",
+                "options": ["rollback", "restore_backup"],
             }
         result["replaced"] = patch_result.get("replaced", 0)
 
@@ -194,7 +254,7 @@ def edit(
             else:
                 try:
                     shutil.copy2(str(backup_path), filepath)
-                except OSError as e:
+                except (OSError, UnicodeError) as e:
                     return {
                         **result,
                         "ok": False,
@@ -233,11 +293,12 @@ def edit(
     return result
 
 
-def list_backups(filepath: str = None) -> dict:
+def list_backups(filepath: str | None = None) -> dict:
     """列出备份文件。"""
-    _backup_dir().mkdir(parents=True, exist_ok=True)
+    backup_root = _backup_dir()
+    backup_root.mkdir(parents=True, exist_ok=True)
     backups = []
-    for b in sorted(_backup_dir().glob("*.bak"), reverse=True):
+    for b in sorted(backup_root.glob("*.bak"), reverse=True):
         stat = b.stat()
         backups.append(
             {
@@ -248,30 +309,42 @@ def list_backups(filepath: str = None) -> dict:
         )
 
     if filepath:
-        name = Path(filepath).name
-        prefix = f"{name}."
+        prefix = f"{backup_name_stem(Path(filepath))}."
         backups = [b for b in backups if b["file"].startswith(prefix)]
 
     return {"ok": True, "backups": backups[:20], "total": len(backups)}
 
 
-def rollback(filepath: str, backup_name: str = None) -> dict:
+def rollback(filepath: str, backup_name: str | None = None) -> dict:
     """
     回滚文件到指定备份。不指定则回滚到最近的备份。
     """
-    p = Path(filepath)
+    safety = check_path_allowed(filepath)
+    if safety:
+        return safety
+
+    p = Path(filepath).resolve()
+    filepath = str(p)
+
+    if not p.exists():
+        return {"ok": False, "error": f"目标文件不存在: {filepath}"}
+
+    backup_root = _backup_dir()
 
     if backup_name:
-        backup_path = _backup_dir() / Path(backup_name).name  # 只取文件名防路径穿越
+        backup_path = backup_root / Path(backup_name).name  # 只取文件名防路径穿越
         if not backup_path.exists():
             return {"ok": False, "error": f"备份不存在: {backup_name}"}
     else:
         # 找最近的备份
-        pattern = f"{p.name}.*.bak"
-        candidates = sorted(_backup_dir().glob(pattern), reverse=True)
+        pattern = f"{backup_name_stem(p)}.*.bak"
+        candidates = sorted(backup_root.glob(pattern), reverse=True)
         if not candidates:
             return {"ok": False, "error": f"没有找到 {p.name} 的备份"}
         backup_path = candidates[0]
 
-    shutil.copy2(str(backup_path), filepath)
+    try:
+        shutil.copy2(str(backup_path), filepath)
+    except (OSError, UnicodeError) as e:
+        return {"ok": False, "error": f"回滚失败: {e}", "proposal": f"备份在 {backup_path}，请手动复制恢复"}
     return {"ok": True, "file": filepath, "restored_from": str(backup_path)}

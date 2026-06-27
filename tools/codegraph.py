@@ -10,13 +10,18 @@ from __future__ import annotations
 import ast as py_ast
 import concurrent.futures
 import json
+import logging
 import multiprocessing
 import os
 import re
 import sqlite3
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from pathlib import Path
+
+from ._file_utils import detect_encoding as _detect_file_encoding
+
+logger = logging.getLogger(__name__)
 
 # ── optional deps ────────────────────────────────────
 
@@ -43,8 +48,16 @@ _PACK_MAX_LINES = 2000
 _PROGRESS_INTERVAL_FILES = 50
 _STREAM_BATCH_SIZE = 50  # Write to DB every N files to limit memory
 
+# 为搜索结果 TOP 符号展示完整源码时的兜底截断
+_TOP_SOURCE_FULL_LINES = 100
+_TOP_SOURCE_HEAD_LINES = 40
+_TOP_SOURCE_TAIL_LINES = 20
+
 # Worker count for parallel parsing
 _MAX_WORKERS = max(1, min(multiprocessing.cpu_count() // 2, 8))
+
+# 触发注册/回调关系的方法名（用于 _py_calls 生成 triggers 边）
+_TRIGGER_METHODS = {"register", "add_tool", "add_handler", "on_event", "subscribe", "listen"}
 
 _LANG_MAP: dict[str, str] = {
     ".py": "python",
@@ -70,7 +83,6 @@ _DEFAULT_IGNORE = {
     "__pycache__", ".git", "node_modules", ".venv", "venv",
     ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
     ".eggs", "build", "dist", "target", ".codegraph",
-    "tests", "__pycache__",
 }
 
 _MAX_FILE_SIZE = 1_000_000  # 1 MB，超大文件（测试数据/json fixture）跳过
@@ -130,6 +142,16 @@ def _tokenize_query(query: str) -> list[str]:
     return sorted(tokens)
 
 
+def _like_escape(s: str) -> str:
+    """为 SQLite LIKE 转义 %、_ 和转义符自身。"""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _fts_escape_token(s: str) -> str:
+    """把 token 用双引号包裹，内部双引号转义，避免 FTS5 语法错误。"""
+    return '"' + s.replace('"', '""') + '"'
+
+
 # ── code graph engine ─────────────────────────────────
 
 class CodeGraph:
@@ -178,8 +200,8 @@ class CodeGraph:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_edge_kind ON edges(kind)")
         try:
             conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS sym_fts USING fts5(name, file, signature)")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("codegraph suppressed error: %s", exc, exc_info=True)
         conn.commit()
         self._conn = conn
 
@@ -192,8 +214,8 @@ class CodeGraph:
         if self._conn:
             try:
                 self._conn.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("codegraph suppressed error: %s", exc, exc_info=True)
             self._conn = None
 
     # ── index ─────────────────────────────────────────
@@ -210,8 +232,8 @@ class CodeGraph:
             conn.execute("DELETE FROM edges")
             try:
                 conn.execute("DELETE FROM sym_fts")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("codegraph suppressed error: %s", exc, exc_info=True)
 
         stats = {"files": 0, "symbols": 0, "edges": 0, "skipped": 0}
         mtimes: dict[str, float] = {}
@@ -223,9 +245,20 @@ class CodeGraph:
         progress_log: list[dict] = []
         files_scanned = 0
 
-        all_files = [f for f in root.rglob("*") if f.is_file() and f.suffix.lower() in _LANG_MAP
-                     and not any(p in _DEFAULT_IGNORE for p in f.parts)
-                     and f.stat().st_size <= _MAX_FILE_SIZE]
+        all_files: list[Path] = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            # 剪枝忽略目录，避免进入 node_modules/.git 等大目录
+            dirnames[:] = [d for d in dirnames if d not in _DEFAULT_IGNORE]
+            for fname in filenames:
+                suffix = Path(fname).suffix.lower()
+                if suffix not in _LANG_MAP:
+                    continue
+                fpath = Path(dirpath) / fname
+                try:
+                    if fpath.stat().st_size <= _MAX_FILE_SIZE:
+                        all_files.append(fpath)
+                except OSError:
+                    pass
         
         # P0-3 fix: clean up deleted files in incremental mode
         changed_files: list[Path] = []
@@ -252,19 +285,27 @@ class CodeGraph:
         total_files = len(all_files)
         changed_count = len(changed_files)
 
-        # ── Single-threaded parsing + batch write ──
+        # ── Parallel parsing + single-threaded batch write ──
         if changed_count > 0:
             worker_args = [(str(f), f.suffix.lower(), str(root)) for f in changed_files]
-            
-            # Single-threaded parsing is faster for typical projects (<1000 files)
-            results = []
-            for args in worker_args:
+
+            results: list = []
+            if len(worker_args) == 1:
+                # 单文件避免线程池开销
                 try:
-                    results.append(_extract_file_worker(args))
+                    results.append(_extract_file_worker(worker_args[0]))
                 except Exception:
                     stats["skipped"] += 1
-            
-            # Batch write
+            else:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
+                    futures = {executor.submit(_extract_file_worker, args): args for args in worker_args}
+                    for future in concurrent.futures.as_completed(futures):
+                        try:
+                            results.append(future.result())
+                        except Exception:
+                            stats["skipped"] += 1
+
+            # Batch write (SQLite 写入仍单线程以避免锁竞争)
             for rp, suffix, mtime_val, symbols, edges in results:
                 if incremental:
                     conn.execute("DELETE FROM symbols WHERE file=?", (rp,))
@@ -320,14 +361,15 @@ class CodeGraph:
 
         try:
             _resolve_references(conn)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("codegraph suppressed error: %s", exc, exc_info=True)
 
         if incremental:
             conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('mtimes',?)", (json.dumps(mtimes),))
         conn.commit()
         
         elapsed = round(time.time() - start, 2)
+        conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", ("project_dir", str(root)))
         conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", ("last_index", str(time.time())))
         conn.commit()
 
@@ -386,7 +428,8 @@ class CodeGraph:
             name = symbols[i]["name"]
             sr = conn.execute("SELECT source FROM symbols WHERE name=? LIMIT 1", (name,)).fetchone()
             if sr and sr[0]:
-                symbols[i]["source"] = sr[0]
+                top = self._top_source_or_hint(sr[0], name)
+                symbols[i].update(top)
         rmap = self._build_relationship_map(conn, [s["name"] for s in symbols])
         blast = self._build_blast_radius(conn, [s["name"] for s in symbols[:3]])
         grouped = self._build_grouped_by_file(conn, symbols)
@@ -417,7 +460,7 @@ class CodeGraph:
             result["partial_path"] = partial["path"]
             result["break_at"] = partial["break_at"]
             result["break_reason"] = partial.get("reason", "BFS 未找到路径")
-            result["hint"] = f"断在 {partial['break_at']}——可能通过回调、动态调用或 AstrBot 框架路由连接。用 rg_search 确认。"
+            result["hint"] = f"断在 {partial['break_at']}——可能通过回调或动态调用连接。用 rg_search 确认。"
         else:
             result["hint"] = f"用 rg_search 搜索 {to_sym} 确认是否通过动态调用连接。"
         return result
@@ -456,7 +499,8 @@ class CodeGraph:
             name = symbols[i]["name"]
             sr = conn.execute("SELECT source FROM symbols WHERE name=? LIMIT 1", (name,)).fetchone()
             if sr and sr[0]:
-                symbols[i]["source"] = sr[0]
+                top = self._top_source_or_hint(sr[0], name)
+                symbols[i].update(top)
         rmap = self._build_relationship_map(conn, [s["name"] for s in symbols])
         grouped = self._build_grouped_by_file(conn, symbols)
 
@@ -466,7 +510,6 @@ class CodeGraph:
                 "search_strategy": strategy}
 
     # ── search engine ─────────────────────────────────
-
     def _search(self, conn, query: str, limit: int = 10) -> tuple[list[dict], str]:
         """三级搜索：LIKE → FTS5 → 无结果提示。支持 kind: 过滤（如 kind:function）。"""
         kind_filter = ""
@@ -474,8 +517,8 @@ class CodeGraph:
         if m:
             kind_filter = m.group(1)
             query = query.replace(m.group(0), "").strip()
-        base_where = f"WHERE name LIKE ?{(' AND kind=?' if kind_filter else '')}"
-        base_params: list = [f"%{query}%"]
+        base_where = f"WHERE name LIKE ? ESCAPE '\\'{' AND kind=?' if kind_filter else ''}"
+        base_params: list = [f"%{_like_escape(query)}%"]
         if kind_filter:
             base_params.append(kind_filter)
         try:
@@ -485,13 +528,13 @@ class CodeGraph:
             ).fetchall()
             if rows:
                 return [_row_to_dict(r) for r in rows], "like"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("codegraph suppressed error: %s", exc, exc_info=True)
 
         tokens = _tokenize_query(query)
         if tokens:
             try:
-                fts_query = " OR ".join(tokens)
+                fts_query = " OR ".join(_fts_escape_token(t) for t in tokens)
                 rows = conn.execute(
                     "SELECT name, file, signature FROM sym_fts WHERE sym_fts MATCH ? ORDER BY rank LIMIT ?",
                     (fts_query, limit * 3),
@@ -506,19 +549,20 @@ class CodeGraph:
                             result.append(_row_to_dict(sr))
                     if result:
                         return result, "fts5"
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("codegraph suppressed error: %s", exc, exc_info=True)
 
         # try LIKE on wider field
         try:
+            like_pat = f"%{_like_escape(query)}%"
             rows = conn.execute(
-                "SELECT name,kind,file,line,signature,source,visibility,is_async FROM symbols WHERE signature LIKE ? OR source LIKE ? LIMIT ?",
-                (f"%{query}%", f"%{query}%", limit),
+                "SELECT name,kind,file,line,signature,source,visibility,is_async FROM symbols WHERE signature LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\' LIMIT ?",
+                (like_pat, like_pat, limit),
             ).fetchall()
             if rows:
                 return [_row_to_dict(r) for r in rows], "like_wide"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("codegraph suppressed error: %s", exc, exc_info=True)
 
         return [], "none"
 
@@ -558,8 +602,8 @@ class CodeGraph:
                 for r in rows:
                     result.append({"name": r[0], "kind": r[1], "file": r[2], "line": r[3]})
                 return result[:limit]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("codegraph suppressed error: %s", exc, exc_info=True)
         return []
 
     # ── relationship map ──────────────────────────────
@@ -640,26 +684,73 @@ class CodeGraph:
         truncated = "\n".join(head) + f"\n... ({skipped} lines skipped) ...\n" + "\n".join(tail)
         return {"source": truncated, "source_truncated": True, "total_lines": total}
 
+    @staticmethod
+    def _top_source_or_hint(source: str, name: str) -> dict:
+        """搜索结果 TOP 符号展示完整源码时的兜底截断，超长时引导 code_pack。"""
+        if not source:
+            return {"source": "", "source_truncated": False, "total_lines": 0}
+        lines = source.split("\n")
+        total = len(lines)
+        if total <= _TOP_SOURCE_FULL_LINES:
+            return {"source": source, "source_truncated": False, "total_lines": total}
+        head = lines[:_TOP_SOURCE_HEAD_LINES]
+        tail = lines[-_TOP_SOURCE_TAIL_LINES:]
+        skipped = total - _TOP_SOURCE_HEAD_LINES - _TOP_SOURCE_TAIL_LINES
+        truncated = "\n".join(head) + f"\n... ({skipped} lines skipped) ...\n" + "\n".join(tail)
+        return {
+            "source": truncated,
+            "source_truncated": True,
+            "total_lines": total,
+            "header": f"符号 '{name}' 源码共 {total} 行，超过 {_TOP_SOURCE_FULL_LINES} 行，已展示 {_TOP_SOURCE_HEAD_LINES} 行头 + {_TOP_SOURCE_TAIL_LINES} 行尾。",
+            "footer": "需要完整源码请调用 code_pack。",
+            "next_call": {"tool": "code_pack", "args": {"target": name}},
+            "options": [f"code_pack('{name}')"],
+        }
+
     # ── code_diff_impact ──────────────────────────────
+
+    def _impact_file_candidates(self, conn, fp: str) -> list[str]:
+        """把用户传入的文件路径归一化为数据库中存储的相对 POSIX 路径的多个候选。"""
+        if not fp:
+            return []
+        candidates = {fp, fp.replace("/", "\\"), fp.replace("\\", "/")}
+        if os.path.isabs(fp):
+            row = conn.execute("SELECT value FROM meta WHERE key='project_dir'").fetchone()
+            if row:
+                try:
+                    rel = Path(fp).relative_to(Path(row[0]))
+                    posix = rel.as_posix()
+                    candidates.add(posix)
+                    candidates.add(posix.replace("/", "\\"))
+                except ValueError:
+                    pass
+        return [c for c in candidates if c]
 
     def code_diff_impact(self, filepaths: list[str], max_depth: int = 3) -> dict:
         conn = self._conn_get()
         affected_symbols: list[dict] = []
         affected_files: set[str] = set()
         for fp in filepaths:
-            rows = conn.execute("SELECT name,kind,line FROM symbols WHERE file=? OR file=? LIMIT 50",
-                                (fp, fp.replace("/", "\\"))).fetchall()
+            candidates = self._impact_file_candidates(conn, fp)
+            if not candidates:
+                continue
+            placeholders = ",".join(["?"] * len(candidates))
+            rows = conn.execute(
+                f"SELECT name,kind,line,file FROM symbols WHERE file IN ({placeholders}) LIMIT 50",
+                candidates,
+            ).fetchall()
             for r in rows:
-                name, kind, line = r[0], r[1], r[2]
+                name, kind, line, matched_fp = r[0], r[1], r[2], r[3]
                 callers = _bfs_all_callers(conn, name, max_depth)
+                depth_map = {c: i + 1 for i, c in enumerate(callers)}
                 for c in callers:
                     sr = conn.execute("SELECT file,kind,line FROM symbols WHERE name=? LIMIT 1", (c,)).fetchone()
                     if sr:
-                        affected_symbols.append({"name": c, "file": sr[0], "kind": sr[1], "depth": callers.index(c) + 1})
+                        affected_symbols.append({"name": c, "file": sr[0], "kind": sr[1], "depth": depth_map[c]})
                         affected_files.add(sr[0])
                 if callers:
-                    affected_symbols.append({"name": name, "file": fp, "kind": kind, "depth": 0})
-                    affected_files.add(fp)
+                    affected_symbols.append({"name": name, "file": matched_fp, "kind": kind, "depth": 0})
+                    affected_files.add(matched_fp)
         return {"ok": True, "affected_symbols": affected_symbols[:30], "affected_files": sorted(affected_files)[:20], "blast_depth": max_depth}
 
     # ── code_pack ─────────────────────────────────────
@@ -679,11 +770,11 @@ class CodeGraph:
 
         deps: list[dict] = []
         visited: set[str] = {target}
-        queue = [(target, 0, "target")]
+        queue = deque([(target, 0, "target")])
         total_lines = len((sr[5] or "").split("\n")) if sr[5] else 0
 
         while queue:
-            node, d, relation = queue.pop(0)
+            node, d, relation = queue.popleft()
             if d >= depth:
                 continue
             if mode in ("callees", "both"):
@@ -751,8 +842,8 @@ class CodeGraph:
         try:
             conn.execute("SELECT count(*) FROM sym_fts").fetchone()
             fts_ok = True
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("codegraph suppressed error: %s", exc, exc_info=True)
 
         missing: list[str] = []
         if HAS_TREE_SITTER:
@@ -797,8 +888,8 @@ def _extract_file(filepath: str, suffix: str) -> tuple[list[dict], list[dict]]:
     if HAS_TREE_SITTER:
         try:
             return _extract_ts(filepath, lang)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("codegraph suppressed error: %s", exc, exc_info=True)
     return [], []
 
 
@@ -824,8 +915,13 @@ def _extract_file_worker(args: tuple) -> tuple[str, str, float, list[dict], list
 # ── Python AST ───────────────────────────────────────
 
 def _extract_python(filepath: str) -> tuple[list[dict], list[dict]]:
-    with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-        source = f.read()
+    try:
+        enc = _detect_file_encoding(filepath)
+        with open(filepath, "r", encoding=enc, errors="replace") as f:
+            source = f.read()
+    except Exception:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            source = f.read()
     tree = py_ast.parse(source)
     symbols: list[dict] = []
     edges: list[dict] = []
@@ -849,8 +945,8 @@ def _extract_python(filepath: str) -> tuple[list[dict], list[dict]]:
                         arg += f": {py_ast.unparse(a.annotation)}"
                     args.append(arg)
                 sig = f"def {node.name}({', '.join(args)})"
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("codegraph suppressed error: %s", exc, exc_info=True)
             symbols.append({"name": fn, "kind": "method" if self._current_cls else "function",
                            "line": node.lineno, "signature": sig,
                            "source": (py_ast.get_source_segment(source, node) or "")[:6000],
@@ -873,8 +969,8 @@ def _extract_python(filepath: str) -> tuple[list[dict], list[dict]]:
                         arg += f": {py_ast.unparse(a.annotation)}"
                     args.append(arg)
                 sig = f"async def {node.name}({', '.join(args)})"
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("codegraph suppressed error: %s", exc, exc_info=True)
             symbols.append({"name": fn, "kind": "method" if self._current_cls else "function",
                            "line": node.lineno, "signature": sig,
                            "source": (py_ast.get_source_segment(source, node) or "")[:6000],
@@ -929,11 +1025,13 @@ def _py_calls(node, source, caller):
                 edges.append({"from": caller, "to": ".".join(_unparse_attr(node.func)), "kind": "calls", "line": getattr(node, "lineno", None)})
             # triggers: register(func) / add_tool(tool) → func ─triggers→ caller
             if isinstance(node.func, py_ast.Attribute):
-                for arg in node.args:
-                    if isinstance(arg, py_ast.Name):
-                        edges.append({"from": arg.id, "to": caller, "kind": "triggers", "line": getattr(node, "lineno", None)})
-                    elif isinstance(arg, py_ast.Attribute):
-                        edges.append({"from": ".".join(_unparse_attr(arg)), "to": caller, "kind": "triggers", "line": getattr(node, "lineno", None)})
+                attr_name = node.func.attr
+                if attr_name in _TRIGGER_METHODS or attr_name.startswith("register_"):
+                    for arg in node.args:
+                        if isinstance(arg, py_ast.Name):
+                            edges.append({"from": arg.id, "to": caller, "kind": "triggers", "line": getattr(node, "lineno", None)})
+                        elif isinstance(arg, py_ast.Attribute):
+                            edges.append({"from": ".".join(_unparse_attr(arg)), "to": caller, "kind": "triggers", "line": getattr(node, "lineno", None)})
             self.generic_visit(node)
     CV().visit(node)
     return edges
@@ -1164,36 +1262,54 @@ def _resolve_references(conn):
 
     # Phase 2: cross-file import resolution (optimized: batch resolve)
     from collections import defaultdict as dd2
+
     file_imports: dict[str, list[str]] = dd2(list)
     all_imports = conn.execute("SELECT file, to_sym FROM edges WHERE kind='imports'").fetchall()
     for f, imp in all_imports:
         file_imports[f].append(imp)
-    
-    # Build a lookup: (import_prefix, short_name) -> set of candidate full names
-    # This avoids N*M individual SQL queries
-    import_startswith_map: dict[tuple[str, str], list[str]] = dd2(list)
-    all_symbol_names = [r[0] for r in conn.execute("SELECT name FROM symbols").fetchall()]
-    for qn in all_symbol_names:
+
+    def _file_to_module(f: str) -> str:
+        if f.endswith(".py"):
+            f = f[:-3]
+        return f.replace("/", ".")
+
+    # (module_path, short_name) -> candidate full names
+    module_map: dict[tuple[str, str], list[str]] = dd2(list)
+    # (import_path, short_name) -> candidate full names (for dotted symbol names)
+    symbol_prefix_map: dict[tuple[str, str], list[str]] = dd2(list)
+    for qn, f in conn.execute("SELECT name, file FROM symbols").fetchall():
         short = qn.rsplit(".", 1)[-1]
-        # For each possible import that matches this symbol's package prefix
-        for i in range(1, len(qn.split("."))):
-            prefix = ".".join(qn.split(".")[:i])
-            import_startswith_map[(prefix, short)].append(qn)
-    
+        module_map[(_file_to_module(f), short)].append(qn)
+        parts = qn.split(".")
+        for i in range(1, len(parts)):
+            prefix = ".".join(parts[:i])
+            symbol_prefix_map[(prefix, short)].append(qn)
+
     unresolved = conn.execute(
         "SELECT e.id, e.from_sym, e.to_sym, s.file "
         "FROM edges e JOIN symbols s ON s.name=e.from_sym "
-        "WHERE e.kind='calls' AND e.resolved=0 LIMIT 10000"
+        "WHERE e.kind='calls' AND e.resolved=0"
     ).fetchall()
-    
+
     for eid, from_sym, to_sym, from_file in unresolved:
-        if from_file not in file_imports:
+        imports = file_imports.get(from_file)
+        if not imports:
             continue
-        candidates = set()
-        for imp in file_imports[from_file]:
-            key = (imp, to_sym)
-            if key in import_startswith_map:
-                candidates.update(import_startswith_map[key])
+        candidates: set[str] = set()
+        for imp in imports:
+            if "." in imp:
+                imp_module, imp_name = imp.rsplit(".", 1)
+                # from module import name
+                if to_sym == imp_name:
+                    candidates.update(module_map.get((imp_module, to_sym), []))
+                # import module; module.foo() 或 from module import Class; Class.method()
+                candidates.update(module_map.get((imp_module, to_sym), []))
+            else:
+                # import module; module.foo()
+                if to_sym.startswith(imp + ".") or "." in to_sym:
+                    candidates.update(module_map.get((imp, to_sym), []))
+            # fallback: original prefix matching on dotted symbol names
+            candidates.update(symbol_prefix_map.get((imp, to_sym), []))
         if len(candidates) == 1:
             conn.execute("UPDATE edges SET to_sym=?, resolved=1 WHERE id=?", (candidates.pop(), eid))
 
@@ -1252,7 +1368,7 @@ def _bfs_partial(conn, start: str, end: str, max_depth: int = 8) -> dict | None:
         rows = conn.execute("SELECT to_sym FROM edges WHERE from_sym=? AND kind IN ('calls','extends','triggers','imports')", (node,)).fetchall()
         if not rows:
             return {"path": path, "break_at": node,
-                    "reason": f"{node} 没有静态调用出边（可能通过回调、动态调用或 AstrBot 框架路由连接）"}
+                    "reason": f"{node} 没有静态调用出边（可能通过回调或动态调用连接）"}
         for (nxt,) in rows:
             if nxt == end:
                 return {"path": path + [nxt], "break_at": "", "reason": "found"}

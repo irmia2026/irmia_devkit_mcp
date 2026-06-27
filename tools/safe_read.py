@@ -1,7 +1,7 @@
 """
 safe_read — 增强版安全文件读取工具。
 
-比 AstrBot 原生 file_read 更强大，但边界清晰：
+比原生 file_read 更强大，但边界清晰：
 - 只做"安全读取"，不做搜索（搜索交给 rg_search）
 - 编码自动检测（chardet + UTF-8/GBK/Latin-1 fallback）
 - 二进制文件检测 + hex preview
@@ -19,7 +19,7 @@ safe_read — 增强版安全文件读取工具。
 
 from __future__ import annotations
 
-import binascii
+import codecs
 import mimetypes
 import os
 import re
@@ -31,7 +31,6 @@ from ._file_utils import (
     detect_encoding,
     human_size,
     is_binary_file,
-    SymlinkGuard,
     check_path_allowed,
 )
 from ._helpers import proposal_reply
@@ -45,13 +44,12 @@ MAX_LINES_PER_CALL = 200                 # 每次最多返回 200 行
 MAX_BYTES_PER_CALL = 128 * 1024          # 每次返回内容上限 128KB（约 25K tokens）
 MAX_HEX_BYTES = 1024                     # hex preview 最多 1KB
 MAX_HEX_LINES = 64                       # hex preview 最多 64 行
-MAX_DIR_ENTRIES = 50                     # 目录读取最大条目数
 SKELETON_MAX_SIZE = 512 * 1024           # skeleton 模式最大处理 512KB
 SKELETON_MAX_LINES = 5000                # skeleton 模式最多处理 5000 行
+_SMALL_FILE_THRESHOLD = 1024 * 1024      # 小文件阈值：小于此值精确统计总行数
 
 # 向后兼容别名
 MAX_RETURN_BYTES = MAX_BYTES_PER_CALL
-MAX_FULL_READ_BYTES = 256 * 1024         # 全量文本读取硬上限 256KB
 
 
 # ── 内容截断辅助 ──
@@ -297,7 +295,7 @@ def _read_lines_range(
     start = max(1, start_line)
     end = end_line if end_line > 0 else float('inf')
 
-    with p.open('r', encoding=encoding, errors='replace') as f:
+    with p.open("r", encoding=encoding, errors="replace", newline="") as f:
         for line in f:
             total_lines += 1
 
@@ -306,8 +304,8 @@ def _read_lines_range(
                 continue
 
             if current_line + 1 > end:
-                # 小文件继续精确统计总行数；大文件保持已计数值，由 has_more 表达未读完
-                if file_size <= 1024 * 1024:
+                # 小文件继续精确统计总行数；大文件保持已计数值
+                if file_size <= _SMALL_FILE_THRESHOLD:
                     for _ in f:
                         total_lines += 1
                 break
@@ -318,12 +316,20 @@ def _read_lines_range(
             if len(lines) >= max_lines:
                 hit_limit = True
                 # 大文件不再扫描剩余行，直接估算；小文件继续精确统计
-                if file_size > 1024 * 1024:
+                if file_size > _SMALL_FILE_THRESHOLD:
                     break
                 # 小文件：继续扫描统计总行数
                 for _ in f:
                     total_lines += 1
                 break
+
+    # 大文件因 max_lines 截断时，total_lines 只统计了已遍历行数，
+    # 用估算补全，避免 _build_next_call_and_options 误判 end>=total
+    # 导致 next_call 消失（此时文件可能还有大量未读行）。
+    if hit_limit and file_size > _SMALL_FILE_THRESHOLD:
+        estimated = _estimate_line_count(p, file_size, encoding)
+        if estimated > total_lines:
+            total_lines = estimated
 
     actual_start = start if start <= total_lines or (hit_limit and lines) else 0
     actual_end = actual_start + len(lines) - 1 if lines else 0
@@ -338,20 +344,31 @@ def _read_head(
     n_lines: int = MAX_LINES_PER_CALL,
 ) -> tuple[list[str], int, bool]:
     """读取文件头部 n 行。
-    
+
+    小文件（<=1MB）精确统计 total_lines；大文件读到 n_lines+1 后即停止，
+    total_lines 使用估算值，避免扫描整个大文件。
+
     返回：(lines, total_lines, has_more)
     """
     p = Path(path)
+    file_size = p.stat().st_size
     lines = []
     total_lines = 0
-    
-    with p.open('r', encoding=encoding, errors='replace') as f:
+    has_more = False
+
+    with p.open("r", encoding=encoding, errors="replace", newline="") as f:
         for line in f:
             total_lines += 1
             if len(lines) < n_lines:
-                lines.append(line.rstrip('\n').rstrip('\r'))
-    
-    has_more = total_lines > len(lines)
+                lines.append(line.rstrip("\n").rstrip("\r"))
+            else:
+                has_more = True
+                if file_size > _SMALL_FILE_THRESHOLD:
+                    break
+
+    if has_more and file_size > _SMALL_FILE_THRESHOLD:
+        total_lines = max(n_lines + 1, _estimate_line_count(p, file_size, encoding))
+
     return lines, total_lines, has_more
 
 
@@ -407,7 +424,7 @@ def _read_tail(
             buffer.appendleft(partial.decode(encoding, errors="replace"))
 
         # 统计总行数：只在文件不大时精确计算，否则估算
-        total_lines = _estimate_line_count(p, size) if size > 1024 * 1024 else _count_lines_exact(p, encoding)
+        total_lines = _estimate_line_count(p, size, encoding) if size > _SMALL_FILE_THRESHOLD else _count_lines_exact(p, encoding)
 
     lines = list(buffer)
     start_line = max(1, total_lines - len(lines) + 1)
@@ -415,24 +432,25 @@ def _read_tail(
     return lines, total_lines, start_line, has_more
 
 
-def _estimate_line_count(path: str | Path, size: int) -> int:
-    """基于文件大小和采样估算行数（用于超大文件 tail）。"""
+def _estimate_line_count(path: str | Path, size: int, encoding: str = "utf-8") -> int:
+    """基于文件大小和采样估算行数（用于超大文件 tail/head）。"""
     p = Path(path)
     sample_size = min(8192, size)
     if sample_size == 0:
         return 0
-    with p.open("r", encoding="utf-8", errors="replace") as f:
-        sample = f.read(sample_size)
-    avg_line = len(sample.splitlines()) / max(len(sample), 1)
-    if avg_line == 0:
-        avg_line = 0.01
-    return max(1, int(size * avg_line / sample_size))
+    with p.open("rb") as f:
+        sample_bytes = f.read(sample_size)
+    sample = sample_bytes.decode(encoding, errors="replace")
+    lines_in_sample = len(sample.splitlines())
+    if lines_in_sample == 0:
+        return 1
+    return max(1, int(size * lines_in_sample / sample_size))
 
 
 def _count_lines_exact(path: str | Path, encoding: str) -> int:
     """精确统计文件行数。"""
     total = 0
-    with Path(path).open("r", encoding=encoding, errors="replace") as f:
+    with Path(path).open("r", encoding=encoding, errors="replace", newline="") as f:
         for _ in f:
             total += 1
     return total
@@ -621,7 +639,7 @@ def read(
     max_depth: int = 3,
     include_metadata: bool = True,
     recursive: bool = False,
-    max_entries: int = MAX_DIR_ENTRIES,
+    max_entries: int = 50,
     include_hidden: bool = False,
 ) -> dict:
     """增强版安全文件读取工具。
@@ -642,6 +660,36 @@ def read(
         max_entries: 已弃用：目录读取已移除
         include_hidden: 已弃用：目录读取已移除
     """
+    # 0. 参数校验
+    if not path or not isinstance(path, (str, os.PathLike)):
+        return proposal_reply(
+            False,
+            "path 参数不能为空",
+            error="path is required",
+            evidence={"path": path},
+            options=["提供有效的文件路径"],
+        )
+    if head < 0:
+        return proposal_reply(False, "head 不能为负数", error="head must be >= 0")
+    if tail < 0:
+        return proposal_reply(False, "tail 不能为负数", error="tail must be >= 0")
+    if max_lines <= 0:
+        return proposal_reply(False, "max_lines 必须大于 0", error="max_lines must be > 0")
+    if offset < 0:
+        return proposal_reply(False, "offset 不能为负数", error="offset must be >= 0")
+    if encoding != "auto":
+        try:
+            codecs.lookup(encoding)
+        except LookupError:
+            return proposal_reply(False, f"不支持的编码: {encoding}", error=f"unknown encoding: {encoding}")
+    if mode not in {"auto", "text", "binary", "hex", "skeleton"}:
+        return proposal_reply(
+            False,
+            f"不支持的 mode: {mode}",
+            error=f"mode must be one of auto/text/binary/hex/skeleton",
+            options=["mode=text", "mode=binary", "mode=hex"],
+        )
+
     # 0. 路径安全校验（与 safe_write/file_remove 同级）
     forbidden = check_path_allowed(path)
     if forbidden:
@@ -719,7 +767,7 @@ def read(
         )
     
     metadata = _get_metadata(p) if include_metadata else {}
-    file_size = p.stat().st_size
+    file_size = metadata.get('size', p.stat().st_size)
     
     if file_size > MAX_FILE_SIZE:
         return proposal_reply(
@@ -872,11 +920,32 @@ def read(
         }
     
     # 行号范围模式
+    if end_line > 0 and start_line > 0 and end_line < start_line:
+        return proposal_reply(
+            False,
+            f"end_line({end_line}) 不能小于 start_line({start_line})",
+            error=f"行号范围非法: end_line({end_line}) < start_line({start_line})",
+            evidence={"start_line": start_line, "end_line": end_line},
+            options=["检查行号范围"],
+        )
+
     lines, actual_start, actual_end, total_lines, has_more = _read_lines_range(
         p, detected_encoding, start_line, end_line, max_lines
     )
     lines, byte_truncated = _truncate_content_by_bytes(lines, MAX_RETURN_BYTES)
     has_more = has_more or byte_truncated
+
+    # start_line 超过 EOF 时给出明确错误与导航
+    if start_line > 0 and actual_start == 0 and total_lines > 0 and not lines:
+        tail_n = min(MAX_LINES_PER_CALL, total_lines)
+        return proposal_reply(
+            False,
+            f"start_line={start_line} 超过文件总行数 {total_lines}，无法读取。",
+            error="start_line 超过文件总行数",
+            evidence={"start_line": start_line, "total_lines": total_lines},
+            options=[f"tail={tail_n}", "head=50"],
+            next_call={"tool": "safe_read", "args": {"path": str(p), "tail": tail_n}},
+        )
 
     content = '\n'.join(lines)
     content, byte_truncated_after = _apply_byte_limit(content, detected_encoding)

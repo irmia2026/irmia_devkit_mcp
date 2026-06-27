@@ -80,7 +80,7 @@ def _list_windows(filter_name: str | None) -> dict:
                         mem_kb = int(mem_str.replace(",", ""))
                     except ValueError:
                         import logging
-                        logging.getLogger("astrbot").debug("proc_list: unexpected memory format: %s", mem_str)
+                        logging.getLogger(__name__).debug("proc_list: unexpected memory format: %s", mem_str)
                         mem_kb = 0
 
             if filter_name and filter_name.lower() not in name.lower():

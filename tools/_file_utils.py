@@ -4,6 +4,7 @@ _file_utils — 文件读取共享代码。
 """
 
 import difflib
+import hashlib
 import os
 from pathlib import Path
 
@@ -225,10 +226,11 @@ def check_path_allowed(path: str | Path) -> dict | None:
 
 
 def read_file(path: str | Path, *, encoding: str = "auto") -> str:
-    """读取文件内容。编码 auto 时自动检测，否则使用指定编码。"""
+    """读取文件内容。编码 auto 时自动检测，否则使用指定编码。保留原始换行符。"""
     p = Path(path)
     enc = detect_encoding(p) if encoding == "auto" else encoding
-    return p.read_text(encoding=enc, errors="replace")
+    with p.open("r", encoding=enc, errors="replace", newline="") as f:
+        return f.read()
 
 
 def read_file_with_encoding(
@@ -237,12 +239,12 @@ def read_file_with_encoding(
     encoding: str = "auto",
     max_bytes: int | None = None,
 ) -> tuple[str, str]:
-    """读取文件内容，同时返回检测到的编码。"""
+    """读取文件内容，同时返回检测到的编码。保留原始换行符。"""
     p = Path(path)
     enc = detect_encoding(p) if encoding == "auto" else encoding
-    if max_bytes is None:
-        return p.read_text(encoding=enc, errors="replace"), enc
-    with p.open("r", encoding=enc, errors="replace") as f:
+    with p.open("r", encoding=enc, errors="replace", newline="") as f:
+        if max_bytes is None:
+            return f.read(), enc
         return f.read(max_bytes), enc
 
 
@@ -253,11 +255,53 @@ def human_size(n: int) -> str:
             s = f"{n:.1f}{unit}"
             return s.replace(".0", "") if ".0" in s else s
         n /= 1024
-    return f"{n:.1f}PB"
+    s = f"{n:.1f}PB"
+    return s.replace(".0PB", "PB")
 
 
-def find_closest_line(content: str, old: str, threshold: float = 0.3) -> dict | None:
-    """在 content 中找与 old 首行最接近的匹配行，返回行号和文本。"""
+def atomic_write_text(path: str | Path, content: str, encoding: str = "utf-8") -> None:
+    """原子写入文本文件：先写同目录临时文件，再 os.replace 替换目标文件。
+
+    保留原始换行符（调用方需确保 content 中的换行符已是期望形式）。
+    """
+    import os as _os
+    import tempfile as _tmp
+
+    target = Path(path)
+    fd, tmp_path = _tmp.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    tmp = Path(tmp_path)
+    try:
+        with _os.fdopen(fd, "w", encoding=encoding, newline="") as f:
+            f.write(content)
+        _os.replace(str(tmp), str(target))
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _first_existing_parent(path: Path) -> Path:
+    """向上查找第一个存在的父目录。"""
+    cur = path
+    while cur and not cur.exists():
+        parent = cur.parent
+        if parent == cur:
+            break
+        cur = parent
+    return cur if cur and cur.exists() else Path.home()
+
+
+def backup_name_stem(p: Path) -> str:
+    """生成包含父目录哈希的备份文件名主干，避免同名不同目录文件混淆。"""
+    parent_str = str(p.parent.resolve()).replace("\\", "/")
+    dir_hash = hashlib.sha256(parent_str.encode("utf-8")).hexdigest()[:8]
+    return f"{p.name}.{dir_hash}"
+
+
+def find_closest_line(content: str, old: str, threshold: float = 0.5) -> dict | None:
+    """在 content 中找与 old 首行最接近的匹配行，返回行号和文本。保留缩进。"""
     lines = content.split("\n")
     best = None
     best_ratio = 0
@@ -266,7 +310,7 @@ def find_closest_line(content: str, old: str, threshold: float = 0.3) -> dict | 
         ratio = difflib.SequenceMatcher(None, first_line, line).ratio()
         if ratio > best_ratio:
             best_ratio = ratio
-            best = (i + 1, line.strip()[:80])
+            best = (i + 1, line.rstrip("\r")[:80])
     if best and best_ratio > threshold:
         return {"line": best[0], "text": best[1]}
     return None
@@ -274,25 +318,25 @@ def find_closest_line(content: str, old: str, threshold: float = 0.3) -> dict | 
 
 def align_whitespace(content: str, old: str, new: str) -> tuple[str, str] | None:
     """Whitespace-tolerant fallback matching (P0-1).
-    当精确匹配失败时，尝试对齐 old/new 的行首空白与 content 中匹配的位置。
+    当精确匹配失败时，尝试对齐 old/new 的行首/行尾空白与 content 中匹配的位置。
     返回 (aligned_old, aligned_new) 或 None。
     对标 Aider 的 replace_part_with_missing_leading_whitespace()。
     """
     old_lines = old.split("\n")
     content_lines = content.split("\n")
-    # 去掉行首空白后的 old 文本
-    old_stripped = [l.lstrip() for l in old_lines]
+    # 去掉行首行尾空白后的 old 文本
+    old_stripped = [l.strip() for l in old_lines]
     if not old_stripped or not old_stripped[0]:
         return None
     # 在 content 中逐行查找匹配的第一个 stripped 行
     for i, cl in enumerate(content_lines):
-        if cl.lstrip() == old_stripped[0]:
+        if cl.strip() == old_stripped[0]:
             # 检查后续行是否匹配
             if i + len(old_lines) > len(content_lines):
                 continue
             match = True
             for j in range(1, len(old_lines)):
-                if content_lines[i + j].lstrip() != old_stripped[j]:
+                if content_lines[i + j].strip() != old_stripped[j]:
                     match = False
                     break
             if match:

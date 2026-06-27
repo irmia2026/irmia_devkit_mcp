@@ -63,17 +63,19 @@ def _detect(p: Path) -> str:
 def _get_line_context(p: Path, line_num: int, context_size: int = 2) -> list[str] | None:
     """读取文件，返回指定行附近 context_size 行的上下文。"""
     try:
-        lines = p.read_text(encoding="utf-8", errors="replace").split("\n")
+        start = max(1, line_num - context_size)
+        end = line_num + context_size
+        ctx = []
+        with p.open("r", encoding="utf-8", errors="replace", newline="") as f:
+            for i, line in enumerate(f, start=1):
+                if i > end:
+                    break
+                if i >= start:
+                    marker = "→" if i == line_num else " "
+                    ctx.append(f"{marker}{i:>4}: {line.rstrip()[:120]}")
+        return ctx
     except Exception:
         return None
-    start = max(0, line_num - context_size - 1)
-    end = min(len(lines), line_num + context_size)
-    ctx = []
-    for i in range(start, end):
-        actual = i + 1
-        marker = "→" if actual == line_num else " "
-        ctx.append(f"{marker}{actual:>4}: {lines[i].rstrip()[:120]}")
-    return ctx
 
 
 def _add_context(p: Path, issues: list, max_issues: int = 5) -> None:
@@ -123,7 +125,7 @@ def _run_ruff(p: Path) -> dict:
             text=True,
             timeout=30,
         )
-        if r.returncode == 0:
+        if r.returncode == 0 and not r.stdout.strip():
             return {"ok": True, "linter": "ruff", "issues": [], "count": 0}
         issues = json.loads(r.stdout) if r.stdout.strip() else []
         result = {"ok": True, "linter": "ruff", "issues": issues, "count": len(issues)}

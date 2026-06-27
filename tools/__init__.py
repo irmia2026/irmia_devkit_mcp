@@ -1,1 +1,1 @@
-# tools package for astrbot_plugin_irmia_devkit
+# Irmia DevKit MCP tools package

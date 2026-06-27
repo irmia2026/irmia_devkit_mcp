@@ -27,26 +27,7 @@ _MAX_TOTAL_SEARCH_STEPS = 500_000
 
 
 def _has_nested_quantifiers(pattern: str) -> bool:
-    """检测常见灾难性回溯模式，如 (a+)+、(a*)*、(a?)+ 等。"""
-    # 直接匹配 (X+)+、(X*)*、(X?)+ 及等价变体
-    stack = []
-    for ch in pattern:
-        if ch == '(':
-            stack.append([])
-        elif ch == ')':
-            if not stack:
-                continue
-            inner = stack.pop()
-            if not inner:
-                continue
-            # 内部是否包含量词
-            has_inner_quant = any(q in inner for q in '+*?')
-            # 括号后紧跟的量词
-            # 这里通过后续字符判断，需要向前看：暂存在解析循环外处理
-        elif stack:
-            stack[-1].append(ch)
-
-    # 更简单可靠：用正则检测 ( [^()]* [+*?] [^()]* ) [+*?]
+    """检测常见的灾难性回溯模式 (a+)+、(a*)*、(a?)+ 等。"""
     return bool(re.search(r'\([^()]*[+\*?][^()]*\)[+\*?]', pattern))
 
 
@@ -84,12 +65,14 @@ def _parse_rg_with_context(stdout: str) -> list[dict]:
     上下文行: file-line-content（横线分隔）
     """
     matches = []
+    pending_context: list[dict] = []
     current = None
     for line in stdout.split("\n"):
         if not line or line.strip() == "--":
             if current:
                 matches.append(current)
                 current = None
+            pending_context = []
             continue
         m = _RG_CTX_RE.match(line)
         if not m:
@@ -103,10 +86,14 @@ def _parse_rg_with_context(stdout: str) -> list[dict]:
             # This is a match line: file:line:content
             if current:
                 matches.append(current)
-            current = {"file": file, "line": int(lineno), "content": text, "context": []}
+            current = {"file": file, "line": int(lineno), "content": text, "context": list(pending_context)}
+            pending_context = []
         elif current is not None:
-            # Context line: append to current match
+            # Context line after a match: append to current match
             current["context"].append({"line": int(lineno), "content": text})
+        else:
+            # Context line before the first match in a group: buffer it
+            pending_context.append({"line": int(lineno), "content": text})
     if current:
         matches.append(current)
     return matches
@@ -120,6 +107,7 @@ def _python_fallback(
     case_sensitive: bool,
     whole_word: bool,
     list_files: bool,
+    context_lines: int = 0,
 ) -> dict:
     """Python 纯标准库内容搜索 fallback。"""
     # ReDoS 前置拦截
@@ -142,16 +130,18 @@ def _python_fallback(
 
     flags = 0 if case_sensitive else re.IGNORECASE
     if whole_word:
-        pattern = rf"\b{re.escape(pattern)}\b"
+        pattern = rf"\b(?:{pattern})\b"
     try:
         compiled = re.compile(pattern, flags)
     except re.error as e:
         return {"ok": False, "error": f"正则表达式无效: {e}"}
 
     matches = []
+    seen_files = {}          # ordered dict for list_files dedup (O(1) add, preserves discovery order)
     files_searched = 0
     truncated = False
     search_steps = 0
+    use_context = context_lines > 0 and not list_files
 
     for root, dirs, files in os.walk(search_path):
         # 跳过隐藏/非代码目录
@@ -164,33 +154,69 @@ def _python_fallback(
 
             # 扩展名过滤
             if file_exts:
-                ext = os.path.splitext(fname)[1].lstrip(".")
+                ext = os.path.splitext(fname)[1].lstrip(".").lower()
                 if ext not in file_exts:
                     continue
 
             files_searched += 1
             fpath = os.path.join(root, fname)
             try:
-                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
-                    for lineno, line in enumerate(f, 1):
+                if use_context:
+                    # 上下文模式：读入整个文件以收集匹配行前后文
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        file_lines = []
+                        for fl in f:
+                            file_lines.append(fl)
+                            if len(file_lines) > _MAX_TOTAL_SEARCH_STEPS:
+                                break
+                    for i, line in enumerate(file_lines):
                         search_steps += 1
                         if search_steps > _MAX_TOTAL_SEARCH_STEPS:
                             truncated = True
                             break
                         if compiled.search(line):
+                            ctx_start = max(0, i - context_lines)
+                            ctx_end = min(len(file_lines), i + context_lines + 1)
+                            context = [
+                                {"line": j + 1, "content": file_lines[j].rstrip("\n").rstrip("\r")[:200]}
+                                for j in range(ctx_start, ctx_end) if j != i
+                            ]
                             matches.append({
                                 "file": fpath,
-                                "line": lineno,
+                                "line": i + 1,
                                 "content": line.strip()[:200],
+                                "context": context,
                             })
-                            if list_files:
-                                unique_files = len(set(m["file"] for m in matches))
-                                if unique_files >= max_results:
-                                    truncated = True
-                                    break
-                            elif len(matches) >= max_results:
+                            if len(matches) >= max_results:
                                 truncated = True
                                 break
+                    if truncated:
+                        break
+                else:
+                    # 无上下文 / list_files：流式逐行扫描
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        for lineno, line in enumerate(f, 1):
+                            search_steps += 1
+                            if search_steps > _MAX_TOTAL_SEARCH_STEPS:
+                                truncated = True
+                                break
+                            if compiled.search(line):
+                                if list_files:
+                                    seen_files[fpath] = True
+                                    if len(seen_files) >= max_results:
+                                        truncated = True
+                                        break
+                                else:
+                                    matches.append({
+                                        "file": fpath,
+                                        "line": lineno,
+                                        "content": line.strip()[:200],
+                                    })
+                                    if len(matches) >= max_results:
+                                        truncated = True
+                                        break
+                    if truncated:
+                        break
             except (OSError, PermissionError):
                 continue
 
@@ -200,13 +226,7 @@ def _python_fallback(
             break
 
     if list_files:
-        seen = set()
-        unique = []
-        for m in matches:
-            if m["file"] not in seen:
-                seen.add(m["file"])
-                unique.append(m)
-        matches = [{"file": m["file"]} for m in unique]
+        matches = [{"file": f} for f in seen_files]
 
     result = {
         "ok": True,
@@ -247,11 +267,19 @@ def search(
     Returns:
         {"ok": true, "engine": "rg"|"python", "count": N, "matches": [...], ...}
     """
+    if not pattern:
+        return proposal_reply(
+            False,
+            "pattern 不能为空，请输入要搜索的内容",
+            error="empty_pattern",
+            options=["提供非空搜索词"],
+        )
+
     search_path = os.path.abspath(path)
     if not os.path.isdir(search_path):
         return {"ok": False, "error": f"目录不存在: {search_path}"}
 
-    exts = [e.strip().lstrip(".") for e in file_exts.split(",") if e.strip()]
+    exts = [e.strip().lstrip(".").lower() for e in file_exts.split(",") if e.strip()]
 
     # ── Layer 1: ripgrep ──
     rg_path = _find_rg()
@@ -333,4 +361,5 @@ def search(
     return _python_fallback(
         pattern, search_path, exts, max_results,
         case_sensitive, whole_word, list_files,
+        context_lines=context_lines,
     )

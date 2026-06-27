@@ -38,7 +38,7 @@ def split_command(cmd: str) -> list[str]:
     if any(part in cmd for part in _DANGEROUS_RAW):
         raise ValueError("command contains shell control characters")
     try:
-        parts = shlex.split(cmd, posix=False)
+        parts = shlex.split(cmd, posix=(os.name != "nt"))
     except ValueError as exc:
         raise ValueError(f"invalid command syntax: {exc}") from exc
     cleaned = [p for p in parts if p.strip()]
@@ -64,6 +64,9 @@ def truncate_output(text: str, max_lines: int = 500) -> tuple[str, bool]:
         return text, False
     head = max(1, int(max_lines * 0.2))
     tail = max(1, max_lines - head - 1)
+    # 预算很小的场景，省略标记占一行会超预算，直接返回头部
+    if head + tail + 1 > max_lines:
+        head, tail = max_lines, 0
     omitted = len(lines) - head - tail
     joined = "\n".join(
         lines[:head] + [f"[...{omitted} lines omitted...]"] + lines[-tail:]
@@ -218,6 +221,18 @@ def run(
         "CARGO_HOME": os.environ.get("CARGO_HOME", ""),
         "GOPATH": os.environ.get("GOPATH", ""),
         "NODE_PATH": os.environ.get("NODE_PATH", ""),
+        # Linux/macOS locale / venv / conda / nvm / timezone
+        "LANG": os.environ.get("LANG", ""),
+        "LC_ALL": os.environ.get("LC_ALL", ""),
+        "LC_CTYPE": os.environ.get("LC_CTYPE", ""),
+        "VIRTUAL_ENV": os.environ.get("VIRTUAL_ENV", ""),
+        "CONDA_PREFIX": os.environ.get("CONDA_PREFIX", ""),
+        "NVM_DIR": os.environ.get("NVM_DIR", ""),
+        "PYENV_ROOT": os.environ.get("PYENV_ROOT", ""),
+        "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+        "DYLD_LIBRARY_PATH": os.environ.get("DYLD_LIBRARY_PATH", ""),
+        "TZ": os.environ.get("TZ", ""),
+        "TERM": os.environ.get("TERM", ""),
         "COLUMNS": "999",
     }
     start = time.monotonic()

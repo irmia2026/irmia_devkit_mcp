@@ -18,12 +18,13 @@ safe_write — 新建文件 / 整体覆盖写入工具（safe_edit 的姊妹工�
 做一次精确替换）；不支持二进制（用 http_download 写入下载内容）。
 """
 
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
 
 from .syntax_check import check as syntax_check
-from ._file_utils import read_file_with_encoding, human_size, SAFE_EDIT_MAX_SIZE
+from ._file_utils import read_file_with_encoding, human_size, SAFE_EDIT_MAX_SIZE, atomic_write_text, _first_existing_parent, backup_name_stem
 from .safe_edit import _backup_dir
 from .file_remove import _FORBIDDEN_PREFIXES
 
@@ -45,12 +46,13 @@ def _preview(content: str, n: int = _PREVIEW_LINES) -> dict:
 def _check_forbidden(p: Path, raw: str) -> dict | None:
     """复用 file_remove 的路径沙箱：拒绝 .. 穿越和系统目录写入。"""
     # 在 Path 解析之前检查原始字符串，防止 Path.normalize() 消除 ..
-    if ".." in raw.replace("\\", "/"):
+    if ".." in raw.replace("\\", "/").split("/"):
         return {"ok": False, "error": "路径包含 .. 穿越，已被拒绝"}
 
     path_str = str(p).replace("\\", "/")
     for forbidden in _FORBIDDEN_PREFIXES:
-        if path_str.lower().startswith(forbidden.lower() + "/") or path_str.lower() == forbidden.lower():
+        forbidden_norm = forbidden.replace("\\", "/")
+        if path_str.lower().startswith(forbidden_norm.lower() + "/") or path_str.lower() == forbidden_norm.lower():
             return {
                 "ok": False,
                 "error": f"禁止写入系统目录: {p}",
@@ -101,6 +103,10 @@ def write(filepath: str, content: str, overwrite: bool = False) -> dict:
     """
     if content is None:
         return {"ok": False, "error": "content 不能为 None"}
+    if not isinstance(content, str):
+        return {"ok": False, "error": f"content 必须是 str 类型，当前为 {type(content).__name__}"}
+    if not filepath or not isinstance(filepath, (str, os.PathLike)):
+        return {"ok": False, "error": "filepath 不能为空"}
 
     raw = str(Path(filepath))
     p = Path(filepath).resolve()
@@ -116,6 +122,15 @@ def write(filepath: str, content: str, overwrite: bool = False) -> dict:
             "error": f"content 超过 20MB 上限（{human_size(content_bytes)}），safe_write 不支持超大文件写入",
         }
 
+    # 检查目标文件所在分区剩余空间（写入实际发生的位置）
+    try:
+        write_dir = p.parent if p.parent.exists() else _first_existing_parent(p.parent)
+        usage = shutil.disk_usage(write_dir)
+        if usage.free < 100 * 1024 * 1024:
+            return {"ok": False, "error": f"目标文件所在分区磁盘空间不足（剩余 {usage.free // 1024 // 1024}MB < 100MB）"}
+    except OSError:
+        pass
+
     # ══════════════════════════════════════════════════════════════
     # 已存在的文件
     # ══════════════════════════════════════════════════════════════
@@ -126,7 +141,7 @@ def write(filepath: str, content: str, overwrite: bool = False) -> dict:
         # ── overwrite=False：返回 proposal + 预览，不写入 ──
         if not overwrite:
             try:
-                existing, _ = read_file_with_encoding(p)
+                existing, _ = read_file_with_encoding(p, max_bytes=128 * 1024)
             except Exception:
                 existing = ""
             return {
@@ -158,13 +173,12 @@ def write(filepath: str, content: str, overwrite: bool = False) -> dict:
         except OSError:
             pass
 
-        try:
-            _, encoding = read_file_with_encoding(p)
-        except Exception:
-            encoding = "utf-8"
+        # content 来自 LLM（Unicode str），始终以 UTF-8 写入。
+        # 不沿用旧文件编码——如果旧文件是 GBK 而新内容含 emoji，会乱码或抛 UnicodeError。
+        encoding = "utf-8"
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        backup_path = backup_root / f"{p.name}.{ts}.write.bak"
+        backup_path = backup_root / f"{backup_name_stem(p)}.{ts}.write.bak"
         try:
             shutil.copy2(str(p), str(backup_path))
         except OSError as e:
@@ -173,9 +187,8 @@ def write(filepath: str, content: str, overwrite: bool = False) -> dict:
         bytes_before = p.stat().st_size
 
         try:
-            with open(p, "w", encoding=encoding, newline="") as f:
-                f.write(content)
-        except OSError as e:
+            atomic_write_text(p, content, encoding)
+        except (OSError, UnicodeError) as e:
             return {"ok": False, "error": f"无法写入文件：{e}"}
 
         result = {
@@ -202,7 +215,7 @@ def write(filepath: str, content: str, overwrite: bool = False) -> dict:
             # 语法检查失败 → 回滚到覆盖前内容（有"旧版本"可恢复）
             try:
                 shutil.copy2(str(backup_path), str(p))
-            except OSError as e:
+            except (OSError, UnicodeError) as e:
                 return {
                     **result,
                     "ok": False,
@@ -245,9 +258,8 @@ def write(filepath: str, content: str, overwrite: bool = False) -> dict:
         created_dirs = [str(d) for d in reversed(missing)]
 
     try:
-        with open(p, "w", encoding="utf-8", newline="") as f:
-            f.write(content)
-    except OSError as e:
+        atomic_write_text(p, content, "utf-8")
+    except (OSError, UnicodeError) as e:
         return {"ok": False, "error": f"无法写入文件：{e}"}
 
     result = {

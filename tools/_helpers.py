@@ -12,6 +12,7 @@ def _run_cmd(
     cwd: str = "",
     timeout: int = 15,
     encoding: str = "utf-8",
+    env: dict | None = None,
 ) -> dict:
     """统一 subprocess.run 封装。返回 {"ok": bool, "stdout": str, "stderr": str, "code": int}"""
     if not cwd:
@@ -25,6 +26,7 @@ def _run_cmd(
             timeout=timeout,
             encoding=encoding,
             errors="replace",
+            env=env,
         )
         return {
             "ok": result.returncode == 0,
@@ -61,7 +63,7 @@ def unwrap(result: dict) -> str:
 
 
 async def run_sync(func, *args, **kwargs):
-    """在默认线程池中运行同步函数，避免阻塞 AstrBot 事件循环。"""
+    """在默认线程池中运行同步函数，避免阻塞事件循环。"""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
 
