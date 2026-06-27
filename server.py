@@ -88,7 +88,9 @@ from tools.op_log import query as _op_log_query
 from tools.proc_list import list_processes as _proc_list
 from tools.sys_snapshot import snapshot as _sys_snapshot
 from tools.disk_info import info as _disk_info
-from tools.tool_stats import snapshot as _tool_stats
+from tools.tool_stats import snapshot as _tool_stats, record as _ts_record
+from tools.op_log import record as _op_record
+import time as _audit_time
 
 mcp = FastMCP(
     "irmia-devkit",
@@ -98,6 +100,50 @@ mcp = FastMCP(
 
 def _json(result: dict) -> str:
     return json.dumps(result, ensure_ascii=False)
+
+
+# ── 审计包装：自动记录 tool_stats + op_log ──────────
+_original_mcp_tool = mcp.tool
+
+def _record_audit(name: str, params: dict, result: dict, duration_ms: int) -> None:
+    """静默审计——失败不影响工具调用。"""
+    try:
+        _ts_record(name)
+    except Exception:
+        pass
+    try:
+        _op_record(name, params, result, duration_ms)
+    except Exception:
+        pass
+
+def _audited_tool(*t_args, **t_kwargs):
+    """Monkey-patch mcp.tool()：所有注册工具自动包含审计记录。"""
+    decorator = _original_mcp_tool(*t_args, **t_kwargs)
+    def wrapper(func):
+        import functools
+        name = func.__name__
+        decorated = decorator(func)
+
+        @functools.wraps(func)
+        def audited(*args, **kwargs):
+            start = _audit_time.monotonic()
+            try:
+                result = decorated(*args, **kwargs)
+            except Exception as exc:
+                dur = int((_audit_time.monotonic() - start) * 1000)
+                _record_audit(name, kwargs, {"ok": False, "error": str(exc)}, dur)
+                raise
+            dur = int((_audit_time.monotonic() - start) * 1000)
+            try:
+                parsed = json.loads(result) if isinstance(result, str) else result
+            except Exception:
+                parsed = {"ok": True, "raw": str(result)[:200]}
+            _record_audit(name, kwargs, parsed, dur)
+            return result
+        return audited
+    return wrapper
+
+mcp.tool = _audited_tool
 
 
 # ═══════════════════════════════════════════════════════
