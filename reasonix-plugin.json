@@ -5,8 +5,7 @@
   "skills": "skills",
   "mcpServers": {
     "irmia-devkit": {
-      "command": "bin/irmia-devkit.cmd",
-      "args": ["--http", "--port", "8000"]
+      "command": "bin/irmia-devkit.cmd"
     }
   }
 }
