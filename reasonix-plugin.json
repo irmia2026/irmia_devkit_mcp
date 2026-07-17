@@ -4,9 +4,8 @@
   "description": "提供一系列LLM友好的实用工具，显著提高开发效率。以safe_edit为核心——每次代码编辑自动备份、语法检查、失败回滚，让AI安全地修改你的代码。",
   "mcpServers": {
     "irmia-devkit": {
-      "command": "python",
-      "args": ["server.py", "--http", "--port", "8000"],
-      "cwd": "."
+      "command": "bin/irmia-devkit.cmd",
+      "args": ["--http", "--port", "8000"]
     }
   }
 }
