@@ -28,12 +28,8 @@ Thumbs.db
 .codegraph/
 .reasonix/
 reasonix.toml
-vendor/*.exe
-vendor/*.dll
-vendor/rg
-vendor/fd
-!vendor/.gitkeep
-!vendor/README.txt
+vendor/.gitkeep
+vendor/README.txt
 doc_extracted.txt
 notes/
 data/
