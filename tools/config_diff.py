@@ -93,4 +93,13 @@ def _load(p: Path) -> dict:
         except ImportError:
             raise ImportError("pyyaml 未安装，请运行: pip install pyyaml")
         return yaml.safe_load(text)
+    if suffix == ".toml":
+        try:
+            import tomllib  # Python 3.11+
+        except ImportError:
+            try:
+                import tomli as tomllib  # pip install tomli (Python 3.10-)
+            except ImportError:
+                raise ImportError("tomllib 不可用，请运行: pip install tomli")
+        return tomllib.loads(text)
     raise ValueError(f"不支持的文件类型: {suffix}")

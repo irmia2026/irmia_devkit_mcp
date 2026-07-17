@@ -385,6 +385,11 @@ def run(
             return path_check
         exe = Path(args[0]).name.lower().removesuffix(".exe")
         framework = {"python": "pytest", "py": "pytest", "pytest": "pytest", "go": "go", "cargo": "cargo", "npx": "jest", "npm": "npm"}.get(exe, framework)
+    elif filepath:
+        # 传入 filepath 但没有自定义 test_cmd：追加到自动检测的命令行
+        fp = str(Path(filepath).resolve())
+        if framework in ("pytest", "jest"):
+            args.append(fp)
 
     returncode, stdout, stderr, elapsed, timed_out = _run(args, root, timeout)
     result = _parser_for(framework)(stdout, stderr, returncode, elapsed, timed_out)
