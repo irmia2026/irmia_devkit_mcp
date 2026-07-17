@@ -28,7 +28,6 @@ Thumbs.db
 .codegraph/
 .reasonix/
 reasonix.toml
-vendor/.gitkeep
 vendor/README.txt
 doc_extracted.txt
 notes/

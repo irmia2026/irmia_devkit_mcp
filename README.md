@@ -10,10 +10,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/irmia2026/irmia_devkit_mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" /></a>
+  <a href="https://github.com/irmia2026/irmia_devkit_mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" /></a>
   <a href="#"><img src="https://img.shields.io/badge/Python-3.10%2B-blue.svg" /></a>
   <a href="#"><img src="https://img.shields.io/badge/MCP-1.0%2B-green.svg" /></a>
   <a href="#"><img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg" /></a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 ---
@@ -127,7 +131,7 @@ Precedence: environment variable (`IRMIA_ES_PATH`, `IRMIA_RG_PATH`, `IRMIA_FD_PA
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Project layout, data flow, design decisions |
 | [CHANGELOG.md](CHANGELOG.md) | Version history (Keep a Changelog) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Adding tools, return-value conventions, security checklist |
-| [LICENSE](LICENSE) | MIT |
+| [LICENSE](LICENSE) | AGPL-3.0 |
 
 ## FAQ
 
@@ -142,4 +146,4 @@ No — by design. The server only binds to localhost, and every filesystem tool 
 
 ## License
 
-MIT © irmia2026
+AGPL-3.0 © irmia2026

@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "irmia-devkit-mcp"
 version = "2.7.0"
 description = "Irmia DevKit MCP Server — 为 Vibe Coding 工具提供安全代码开发工具集"
+license = {text = "AGPL-3.0-only"}
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.0.0",
