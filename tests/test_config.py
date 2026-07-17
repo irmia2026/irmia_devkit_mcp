@@ -40,9 +40,7 @@ class TestConfig:
         cfg.set_config({})
         c = cfg.get_config()
         assert "backup_dir" in c
-        assert "gh_path" in c
         assert "es_path" in c
-        assert "op_log_db" in c
 
     def test_config_immutable_across_calls(self):
         cfg.set_config({"my_key": "my_val"})

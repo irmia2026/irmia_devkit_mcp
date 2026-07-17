@@ -11,6 +11,10 @@ from pathlib import Path
 
 from ._helpers import proposal_reply
 
+
+_VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor"
+
+
 # 扫描时跳过的目录名
 _SKIP_DIRS = {
     ".git", "__pycache__", "node_modules", ".venv", "venv",
@@ -32,7 +36,17 @@ def _has_nested_quantifiers(pattern: str) -> bool:
 
 
 def _find_rg() -> str | None:
-    """查找 rg 可执行文件路径，未找到返回 None。"""
+    """查找 rg 可执行文件路径：优先项目内置目录 → PATH，未找到返回 None。
+    跨平台：Linux/macOS 优先原生 rg，Windows 优先 rg.exe。"""
+    import platform
+    is_windows = platform.system() == "Windows"
+    names = ("rg.exe", "rg") if is_windows else ("rg", "rg.exe")
+    for name in names:
+        candidate = str(_VENDOR_DIR / name)
+        if os.path.isfile(candidate):
+            if not is_windows and not os.access(candidate, os.X_OK):
+                continue
+            return candidate
     return shutil.which("rg")
 
 

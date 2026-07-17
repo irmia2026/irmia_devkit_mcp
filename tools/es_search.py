@@ -15,12 +15,26 @@ from .config import get_config
 from ._helpers import proposal_reply, _run_cmd
 
 
+_VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor"
+
+
 def _get_es_path() -> str:
-    """获取 es.exe 路径：配置优先 → PATH 自动查找 → 默认路径"""
+    """获取 es.exe 路径：项目内置目录 → 配置 → PATH → 默认 es"""
+    import platform
+    is_windows = platform.system() == "Windows"
+    names = ("es.exe", "es") if is_windows else ("es", "es.exe")
+    for name in names:
+        candidate = str(_VENDOR_DIR / name)
+        if os.path.isfile(candidate):
+            if not is_windows and not os.access(candidate, os.X_OK):
+                continue
+            return candidate
+
     config = get_config()
     custom = config.get("es_path", "")
     if custom and os.path.exists(custom):
         return custom
+
     found = shutil.which("es")
     if found:
         return found
@@ -74,7 +88,19 @@ def _posix_search(
             pass
 
     # --- Layer 2: fd ---
-    fd_path = shutil.which("fd")
+    fd_path = None
+    import platform
+    is_windows = platform.system() == "Windows"
+    names = ("fd.exe", "fd") if is_windows else ("fd", "fd.exe")
+    for name in names:
+        candidate = str(_VENDOR_DIR / name)
+        if os.path.isfile(candidate):
+            if not is_windows and not os.access(candidate, os.X_OK):
+                continue
+            fd_path = candidate
+            break
+    if not fd_path:
+        fd_path = shutil.which("fd")
     if fd_path:
         try:
             type_arg = "f" if file_type == "file" else ("d" if file_type == "folder" else None)

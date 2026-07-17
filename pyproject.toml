@@ -1,6 +1,10 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "irmia-devkit-mcp"
-version = "2.6.0"
+version = "2.7.0"
 description = "Irmia DevKit MCP Server — 为 Vibe Coding 工具提供安全代码开发工具集"
 requires-python = ">=3.10"
 dependencies = [
@@ -9,6 +13,12 @@ dependencies = [
 
 [project.scripts]
 irmia-devkit = "__main__:main"
+
+[tool.setuptools]
+py-modules = ["__main__", "server"]
+
+[tool.setuptools.package-data]
+"*" = ["vendor/*", "bin/*", "pyproject.toml", "requirements.txt", "README.md", "LICENSE"]
 
 [tool.ruff.lint]
 ignore = ["E701", "E741"]

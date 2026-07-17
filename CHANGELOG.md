@@ -8,18 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **外部工具自动检测**: 启动时自动扫描 `es`/`rg`/`gh` 路径，写入 `~/.irmia/mcp_config.json`，扫描不到时打印安装指引。
-- **跨平台 auto_config**: Linux/macOS 下 `es_path` 自动回退 `locate`/`fd`，不产生误报警。
+- **外部工具自动检测**: 启动时自动扫描项目 `vendor/` 目录或系统 PATH 中的 `es`/`rg`/`fd` 路径，写入 `~/.irmia/mcp_config.json`，扫描不到时打印安装指引。
+- **跨平台 auto_config**: Linux / macOS 下 `es_path` 自动回退 `locate`/`fd`，不产生误报警。
+- **内置二进制支持**: `vendor/` 目录可放置 `rg.exe` / `es.exe` / `fd.exe`（Windows）及 `rg` / `fd`（Linux / macOS），启动时优先使用。
 
-### Fixed
-- **审计链断裂修复**: `tool_stats.record()` 和 `op_log.record()` 在 MCP 迁移后未被调用。通过 monkey-patch `mcp.tool()` 自动注入审计，覆盖全部 65 个工具。
-- **tool_stats 线程安全**: `record()` 加 `threading.Lock`，修复 SSE 并发模式下计数丢失。
+### Removed
+- **Git & GitHub 工具集**: 移除 `git_status`、`git_diff`、`git_log`、`git_commit`、`git_branch`、`git_remote`、`git_push`、`git_changelog` 以及 `gh_pr`、`gh_issue`、`gh_release`、`gh_repo` 共 12 个工具。Git 操作更适合由宿主 Agent 或独立 Git 工作流处理。
+- **审计工具**: 移除 `tool_stats` 和 `op_log` 及其内存 / SQLite 审计链，简化 `server.py` 架构，移除对 `mcp.tool()` 的 monkey-patch。
+- **文本处理工具**: 移除 `csv_parse`、`csv_gen`、`md_strip`、`log_parse`。
+- **扩展工具**: 移除 `project_init`、`semver_compare`。
+- **命令执行工具**: 移除 `shell_exec`。`test_runner` 继续保留内置的安全命令校验逻辑。
+- **相关配置**: 从 `mcp_config.json` 和全局配置中移除 `gh_path` 与 `op_log_db`。
+
+### Changed
+- **工具数量**: 65 → **44**。
+- **文档重写**: README.md、ARCHITECTURE.md 同步更新，移除已删工具的引用和描述。
 
 ### Security
 - **本地部署锁定**: `--host` 参数仅接受 `127.0.0.1` / `localhost` / `::1`，远程地址启动时直接拒绝。
-
-### Changed
-- **文档重写**: README.md、ARCHITECTURE.md、CHANGELOG.md 全面重写，遵循高质量开源文档规范。
 
 ## [v2.6.0] — 2026-06-24 — MCP 初始发布
 
@@ -42,14 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ---
 
 > **以下为上游 `irmia_devkit_open` 的完整版本历史（v1.2.0 → v2.6.0）。**
-> MCP 版本继承所有这些功能改进。
+> MCP 版本继承所有这些功能改进；但当前 `Unreleased` 版本已移除部分工具，详见上方 Removed 节。
 
 ## v2.6.0 (upstream) — 增强文件读取 + 全量安全审查修复
 
 - **新工具**: `safe_read` — 增强版安全文件读取，支持编码自动检测、hex 预览、head/tail、代码骨架提取。
-- **安全修复**: SSRF IPv4 八进制/十六进制/短写法绕过；shell_exec 参数路径校验；file_remove symlink 跟随修复；file_zip symlink 打包修复。
-- **性能修复**: safe_write 大文件预览限制、safe_read tail 模式优化。
-- **Bug 修复**: safe_read max_depth、sys_snapshot UnboundLocalError。
+- **安全修复**: SSRF IPv4 八进制/十六进制/短写法绕过；`shell_exec` 参数路径校验；`file_remove` symlink 跟随修复；`file_zip` symlink 打包修复。
+- **性能修复**: `safe_write` 大文件预览限制、`safe_read` tail 模式优化。
+- **Bug 修复**: `safe_read` max_depth、`sys_snapshot` UnboundLocalError。
 
 ## v2.5.7 — 配置页重构 + Release 安装包补齐
 
@@ -61,29 +67,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - codegraph 索引从 O(N×M) SQL 优化到 O(1) 哈希查表（500+ 文件项目从 >120s → 3.8s）。
 - codegraph P0 Bug: 修复 `project_dir` 路径不一致导致的"索引为空"误报。
-- 安全加固: safe_write 路径穿越、symbol_rename 提案协议。
+- 安全加固: `safe_write` 路径穿越、`symbol_rename` 提案协议。
 
 ## v2.5.5 — MCP 改动同步 + 安全修复 + 文档对齐
 
 - 工具合并: `base64_`+`hex_`+`url_` → `encode_decode`; `time_now`+`time_convert`+`time_diff` → `time`。
 - 删除非核心工具: `file_watch`、`svg_render`、`json_schema_val`、`regex_test`。
-- shell_exec ReDoS 防护、rg_search Python fallback ReDoS 防护、op_log 扩展敏感词。
+- `shell_exec` ReDoS 防护、`rg_search` Python fallback ReDoS 防护、`op_log` 扩展敏感词。
 
 ## v2.5.0 — 测试/执行/审计/重命名能力补完
 
 - 新工具: `test_runner`、`multi_edit`、`shell_exec`、`op_log`、`symbol_rename`。
-- shell_exec 七层防御沙箱。op_log SQLite 审计日志（sensitive 参数脱敏）。
-- protect_tool 接入 op_log 审计。
+- `shell_exec` 七层防御沙箱。`op_log` SQLite 审计日志（sensitive 参数脱敏）。
+- `protect_tool` 接入 `op_log` 审计。
 
 ## v2.4.5 — 语义索引 5 工具 + gh_cli 自动定位
 
-- code_index、code_explore、code_diff_impact、code_pack、code_status 上线。
+- `code_index`、`code_explore`、`code_diff_impact`、`code_pack`、`code_status` 上线。
 - Python AST 零依赖解析 + 可选 tree-sitter 多语言。
-- gh_cli 移除本地路径硬编码，全盘自动搜索。
+- `gh_cli` 移除本地路径硬编码，全盘自动搜索。
 
 ## v2.4.0 — 代码语义索引 + L2 原生工具摘除
 
-- code_index / code_explore: Python AST + SQLite FTS5，三级搜索（LIKE → FTS5 → hint）。
+- `code_index` / `code_explore`: Python AST + SQLite FTS5，三级搜索（LIKE → FTS5 → hint）。
 - L2 原生工具摘除恢复（当 devkit 替代品可用时）。
 
 ## v2.3.7 — 工具管理权收回 + 防御上线

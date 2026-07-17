@@ -239,7 +239,6 @@ def move(sources: list, dest: str, overwrite: bool = False) -> dict:
     """批量移动文件/目录到目标目录。
 
     同分区内使用原子 rename（O(1)），跨分区自动退化为 copy+delete。
-    避免 agent 通过 shell_exec 逐文件 mv 导致超时。
 
     Args:
         sources: 源文件/目录路径列表

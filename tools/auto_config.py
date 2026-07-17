@@ -5,9 +5,9 @@ auto_config — 外部工具自动检测 + 配置文件管理。
 用户可手动编辑该文件。扫不到的给出安装指引。
 
 跨平台:
-  Windows:  Everything (es.exe) + ripgrep (rg) + GitHub CLI (gh)
-  Linux:    locate/fd (内置 fallback, 无需 es) + ripgrep + GitHub CLI
-  macOS:    locate/fd (内置 fallback, 无需 es) + ripgrep + GitHub CLI
+  Windows:  Everything (es.exe) + ripgrep (rg.exe/rg) + fd (fd.exe/fd)
+  Linux:    locate/fd (内置 fallback, 无需 es) + ripgrep (rg) + fd
+  macOS:    locate/fd (内置 fallback, 无需 es) + ripgrep (rg) + fd
 """
 
 from __future__ import annotations
@@ -27,11 +27,14 @@ IS_LINUX = platform.system() == "Linux"
 CONFIG_DIR = Path.home() / ".irmia"
 CONFIG_PATH = CONFIG_DIR / "mcp_config.json"
 
+# -- 项目内置二进制目录（可放置 rg.exe / es.exe / fd.exe） ------------------
+VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor"
+
 # -- 默认配置 --------------------------------------------------
 DEFAULT_CONFIG: dict[str, Any] = {
     "es_path": "",
     "rg_path": "",
-    "gh_path": "",
+    "fd_path": "",
     "backup_dir": str(Path.home() / ".irmia" / "backups"),
 }
 
@@ -69,23 +72,6 @@ _INSTALL_GUIDE_BASE: dict[str, dict[str, str]] = {
             "  brew install ripgrep"
         ),
     },
-    "gh": {
-        "windows": (
-            "GitHub CLI (GitHub 操作):\n"
-            "  下载: https://cli.github.com/\n"
-            "  安装后运行: gh auth login"
-        ),
-        "linux": (
-            "GitHub CLI (GitHub 操作):\n"
-            "  sudo apt install gh  或  sudo dnf install gh\n"
-            "  安装后运行: gh auth login"
-        ),
-        "darwin": (
-            "GitHub CLI (GitHub 操作):\n"
-            "  brew install gh\n"
-            "  安装后运行: gh auth login"
-        ),
-    },
 }
 
 # 根据当前平台生成安装指引
@@ -105,14 +91,32 @@ def _get_platform_key() -> str:
 
 
 def _find_exe(names: list[str], extra_paths: list[str] | None = None) -> str:
-    """搜索可执行文件：PATH -> 常见路径 -> 返回空字符串。"""
-    for name in names:
+    """搜索可执行文件：项目内置 vendor 目录 → PATH → 常见路径 → 返回空字符串。
+    跨平台：Linux/macOS 优先无后缀原生二进制，忽略 .exe；Windows 优先 .exe。"""
+    # 根据平台决定候选顺序：Linux/macOS 优先无后缀，Windows 优先 .exe
+    if IS_WINDOWS:
+        ordered = sorted(names, key=lambda n: (not n.endswith(".exe"), n))
+    else:
+        ordered = sorted(names, key=lambda n: (n.endswith(".exe"), n))
+
+    # 1. 优先搜索项目内置目录
+    for name in ordered:
+        candidate = str(VENDOR_DIR / name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+        # Windows 上 .exe 可能没有显式 X 权限，但仍可执行
+        if IS_WINDOWS and os.path.isfile(candidate):
+            return candidate
+
+    # 2. 系统 PATH
+    for name in ordered:
         found = shutil.which(name)
         if found:
             return found
 
+    # 3. 额外指定路径
     if extra_paths:
-        for name in names:
+        for name in ordered:
             for base in extra_paths:
                 candidate = os.path.join(base, name)
                 if os.path.isfile(candidate):
@@ -135,15 +139,8 @@ def scan_tools() -> dict[str, Any]:
     # -- rg (跨平台) --
     result["rg_path"] = _find_exe(["rg", "rg.exe"])
 
-    # -- gh (跨平台) --
-    extra_gh = None
-    if IS_WINDOWS:
-        extra_gh = [
-            r"C:\Program Files\GitHub CLI",
-            r"C:\Program Files (x86)\GitHub CLI",
-            os.path.expandvars(r"%LOCALAPPDATA%\Programs\GitHub CLI"),
-        ]
-    result["gh_path"] = _find_exe(["gh", "gh.exe"], extra_paths=extra_gh)
+    # -- fd (跨平台，es_search 的 fallback 引擎) --
+    result["fd_path"] = _find_exe(["fd", "fd.exe"])
 
     result["_platform"] = _get_platform_key()
     result["_missing"] = [
@@ -225,11 +222,11 @@ def check_and_warn(config: dict[str, Any], *, silent: bool = False) -> list[str]
 def print_startup_banner(config: dict[str, Any]) -> None:
     """启动横幅：工具状态一览。"""
     tools_status = []
-    for key in ("es_path", "rg_path", "gh_path"):
+    for key in ("es_path", "rg_path", "fd_path"):
         name = key.replace("_path", "")
         path = config.get(key, "")
 
-        # 非 Windows 下 es 显示内置回退
+        # 非 Windows 下 es 显示内置回退；fd 是 es_search 的 fallback 引擎
         if key == "es_path" and not IS_WINDOWS:
             if path:
                 tools_status.append(f"  [+] {name:>4s} -> {path}")

@@ -23,8 +23,9 @@ check_and_warn(_mcp_config)
 _cfg.set_config(
     {
         "backup_dir": os.environ.get("IRMIA_BACKUP_DIR", _mcp_config.get("backup_dir", str(Path.home() / ".irmia" / "backups"))),
-        "gh_path": os.environ.get("IRMIA_GH_PATH", _mcp_config.get("gh_path", "")),
         "es_path": os.environ.get("IRMIA_ES_PATH", _mcp_config.get("es_path", "")),
+        "rg_path": os.environ.get("IRMIA_RG_PATH", _mcp_config.get("rg_path", "")),
+        "fd_path": os.environ.get("IRMIA_FD_PATH", _mcp_config.get("fd_path", "")),
         "state_dir": "",
         "lock_dirs": [],
     },
@@ -39,24 +40,9 @@ from tools.multi_edit import run as _multi_edit
 from tools.syntax_check import check as _syntax_check
 from tools.lint_runner import run as _lint_runner
 from tools.test_runner import run as _test_runner
-from tools.git_smart import (
-    status as _git_status, diff as _git_diff, log as _git_log,
-    commit as _git_commit, current_branch as _git_branch, push as _git_push,
-    remote_url as _git_remote,
-)
-from tools.gh_cli import (
-    pr_create as _gh_pr_create, pr_list as _gh_pr_list,
-    pr_merge as _gh_pr_merge, pr_view as _gh_pr_view,
-    issue_create as _gh_issue_create, issue_list as _gh_issue_list,
-    issue_close as _gh_issue_close,
-    release_create as _gh_release_create, release_list as _gh_release_list,
-    repo_view as _gh_repo_view, repo_create as _gh_repo_create,
-    run_list as _gh_run_list, auth_status as _gh_auth_status,
-)
 from tools.http_get import get as _http_get, post as _http_post
 from tools.http_download import download as _http_download
 from tools.rg_search import search as _rg_search
-from tools.shell_exec import run as _shell_exec
 from tools.codegraph import CodeGraph
 from tools.symbol_rename import run as _symbol_rename
 from tools.dep_scan import scan as _dep_scan
@@ -73,7 +59,6 @@ from tools.html_extract import extract as _html_extract
 from tools.json_query import query as _json_query
 from tools.text_filter import filter_lines as _text_filter
 from tools.diff_strings import diff as _diff_strings
-from tools.csv_utils import parse as _csv_parse, generate as _csv_gen
 from tools.encode_utils import (
     b64_encode as _b64_encode, b64_decode as _b64_decode,
     url_encode as _url_encode, url_decode as _url_decode,
@@ -82,23 +67,14 @@ from tools.encode_utils import (
 from tools.time_utils import now as _time_now, ts_to_iso as _ts_to_iso, iso_to_ts as _iso_to_ts, time_diff as _time_diff  # used by time tool
 from tools.port_check import check as _port_check, scan as _port_scan
 from tools.uuid_gen import gen as _uuid_gen
-from tools.semver import compare as _semver_compare
-from tools.project_init import scan as _project_init
-from tools.git_changelog import changelog as _git_changelog
-from tools.md_strip import strip as _md_strip
-from tools.log_parse import parse as _log_parse
 from tools.config_diff import diff as _config_diff
-from tools.op_log import query as _op_log_query
 from tools.proc_list import list_processes as _proc_list
 from tools.sys_snapshot import snapshot as _sys_snapshot
 from tools.disk_info import info as _disk_info
-from tools.tool_stats import snapshot as _tool_stats, record as _ts_record
-from tools.op_log import record as _op_record
-import time as _audit_time
 
 mcp = FastMCP(
     "irmia-devkit",
-    instructions="弥亚开发工具箱 MCP — 安全代码编辑、Git/GitHub、搜索、测试、代码智能、网络、文件、编码、时间、文本处理、系统信息。为仅有 shell 的 bare agent 提供全面且安全的开发工具集。",
+    instructions="弥亚开发工具箱 MCP — 安全代码编辑、搜索、测试、代码智能、网络、文件、编码、时间、文本处理、系统信息。为仅有 shell 的 bare agent 提供全面且安全的开发工具集。",
 )
 
 
@@ -106,48 +82,6 @@ def _json(result: dict) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
-# ── 审计包装：自动记录 tool_stats + op_log ──────────
-_original_mcp_tool = mcp.tool
-
-def _record_audit(name: str, params: dict, result: dict, duration_ms: int) -> None:
-    """静默审计——失败不影响工具调用。"""
-    try:
-        _ts_record(name)
-    except Exception:
-        pass
-    try:
-        _op_record(name, params, result, duration_ms)
-    except Exception:
-        pass
-
-def _audited_tool(*t_args, **t_kwargs):
-    """Monkey-patch mcp.tool()：所有注册工具自动包含审计记录。"""
-    decorator = _original_mcp_tool(*t_args, **t_kwargs)
-    def wrapper(func):
-        import functools
-        name = func.__name__
-        decorated = decorator(func)
-
-        @functools.wraps(func)
-        def audited(*args, **kwargs):
-            start = _audit_time.monotonic()
-            try:
-                result = decorated(*args, **kwargs)
-            except Exception as exc:
-                dur = int((_audit_time.monotonic() - start) * 1000)
-                _record_audit(name, kwargs, {"ok": False, "error": str(exc)}, dur)
-                raise
-            dur = int((_audit_time.monotonic() - start) * 1000)
-            try:
-                parsed = json.loads(result) if isinstance(result, str) else result
-            except Exception:
-                parsed = {"ok": True, "raw": str(result)[:200]}
-            _record_audit(name, kwargs, parsed, dur)
-            return result
-        return audited
-    return wrapper
-
-mcp.tool = _audited_tool
 
 
 # ═══════════════════════════════════════════════════════
@@ -280,198 +214,6 @@ def test_runner(project_dir: str = ".", test_cmd: str = "", timeout: int = 120, 
         filepath: 限定测试文件，空=全部
     """
     return _json(_test_runner(filepath=filepath or "", project_dir=project_dir, test_cmd=test_cmd, timeout=timeout))
-
-
-# ═══════════════════════════════════════════════════════
-# 🔀 Git & GitHub (11)
-# ═══════════════════════════════════════════════════════
-
-@mcp.tool()
-def git_status(cwd: str = ".") -> str:
-    """仓库状态 (--porcelain 格式)。返回是否干净 + 变更列表。
-
-    Args:
-        cwd: 仓库路径，默认当前目录
-    """
-    return _json(_git_status(cwd=cwd))
-
-
-@mcp.tool()
-def git_diff(cwd: str = ".", staged: bool = False, filepath: str = "") -> str:
-    """工作区或暂存区差异。
-
-    Args:
-        cwd: 仓库路径
-        staged: True=暂存区差异，False=工作区差异
-        filepath: 限定文件路径，空=全部
-    """
-    return _json(_git_diff(cwd=cwd, staged=staged, filepath=filepath or None))
-
-
-@mcp.tool()
-def git_log(cwd: str = ".", count: int = 10) -> str:
-    """最近 N 条提交记录。
-
-    Args:
-        cwd: 仓库路径
-        count: 条数
-    """
-    return _json(_git_log(cwd=cwd, count=count))
-
-
-@mcp.tool()
-def git_commit(cwd: str = ".", message: str = "") -> str:
-    """暂存所有变更并提交。超过 10 个文件时拦截需确认。
-
-    Args:
-        cwd: 仓库路径
-        message: 提交信息（fix:/feat:/refactor: 规范）
-    """
-    return _json(_git_commit(cwd=cwd, message=message))
-
-
-@mcp.tool()
-def git_branch(cwd: str = ".") -> str:
-    """当前分支名。
-
-    Args:
-        cwd: 仓库路径
-    """
-    return _json(_git_branch(cwd=cwd))
-
-
-@mcp.tool()
-def git_remote(cwd: str = ".") -> str:
-    """远程仓库 URL。
-
-    Args:
-        cwd: 仓库路径
-    """
-    return _json(_git_remote(cwd=cwd))
-
-
-@mcp.tool()
-def git_push(cwd: str = ".", remote: str = "origin", branch: str = "") -> str:
-    """推送到远程（无 --force）。
-
-    Args:
-        cwd: 仓库路径
-        remote: 远程名，默认 origin
-        branch: 分支名，空=当前分支
-    """
-    return _json(_git_push(cwd=cwd, remote=remote, branch=branch))
-
-
-@mcp.tool()
-def git_changelog(cwd: str = ".", count: int = 30) -> str:
-    """语义化 git log 分组：feat/fix/docs/refactor 等分类展示。
-
-    Args:
-        cwd: 仓库路径
-        count: 处理的提交条数
-    """
-    return _json(_git_changelog(cwd=cwd, count=count))
-
-
-@mcp.tool()
-def gh_pr(action: str, cwd: str = ".", title: str = "", body: str = "", base: str = "main", head: str = "", number: int = 0, state: str = "open", limit: int = 10, strategy: str = "squash") -> str:
-    """GitHub PR 操作：创建/列出/合并/查看。
-
-    Args:
-        action: create | list | merge | view
-        cwd: 仓库路径
-        title: PR 标题（create 用）
-        body: PR 描述（create 用）
-        base: 目标分支（create 用），默认 main
-        head: 源分支（create 用）
-        number: PR 编号（view/merge 用）
-        state: open | closed | all（list 用）
-        limit: 列表条数（list 用）
-        strategy: merge | squash | rebase（merge 用），默认 squash
-    """
-    if action == "create":
-        result = _gh_pr_create(cwd=cwd, title=title, body=body, base=base, head=head)
-    elif action == "list":
-        result = _gh_pr_list(cwd=cwd, state=state, limit=limit)
-    elif action == "merge":
-        result = _gh_pr_merge(cwd=cwd, number=number or None, strategy=strategy)
-    elif action == "view":
-        result = _gh_pr_view(cwd=cwd, number=number or None)
-    else:
-        result = {"ok": False, "error": f"unknown action: {action}"}
-    return _json(result)
-
-
-@mcp.tool()
-def gh_issue(action: str, cwd: str = ".", title: str = "", body: str = "", labels: str = "", number: int = 0, state: str = "open", limit: int = 10) -> str:
-    """GitHub Issue 操作：创建/列出/关闭。
-
-    Args:
-        action: create | list | close
-        cwd: 仓库路径
-        title: Issue 标题（create 用）
-        body: Issue 描述（create 用）
-        labels: 逗号分隔标签（create 用）
-        number: Issue 编号（close 用）
-        state: open | closed | all（list 用）
-        limit: 列表条数（list 用）
-    """
-    if action == "create":
-        lbls = [l.strip() for l in labels.split(",") if l.strip()] if labels else None
-        result = _gh_issue_create(cwd=cwd, title=title, body=body, labels=lbls)
-    elif action == "list":
-        result = _gh_issue_list(cwd=cwd, state=state, limit=limit)
-    elif action == "close":
-        result = _gh_issue_close(cwd=cwd, number=number)
-    else:
-        result = {"ok": False, "error": f"unknown action: {action}"}
-    return _json(result)
-
-
-@mcp.tool()
-def gh_release(action: str, cwd: str = ".", tag: str = "", notes: str = "", generate_notes: bool = True, limit: int = 5) -> str:
-    """GitHub Release 操作：创建/列出。
-
-    Args:
-        action: create | list
-        cwd: 仓库路径
-        tag: tag 名称（create 用）
-        notes: release 说明（create 用）
-        generate_notes: 是否自动生成 release notes（create 用）
-        limit: 列表条数（list 用）
-    """
-    if action == "create":
-        result = _gh_release_create(cwd=cwd, tag=tag, notes=notes, generate_notes=generate_notes)
-    elif action == "list":
-        result = _gh_release_list(cwd=cwd, limit=limit)
-    else:
-        result = {"ok": False, "error": f"unknown action: {action}"}
-    return _json(result)
-
-
-@mcp.tool()
-def gh_repo(action: str, name: str = "", private: bool = True, cwd: str = "", owner_repo: str = "", push: bool = True) -> str:
-    """GitHub 仓库操作：创建/查看/CI状态/认证状态。
-
-    Args:
-        action: create | view | ci | auth
-        name: 仓库名（create 用）
-        private: 是否私有（create 用）
-        cwd: 本地仓库路径（create/push 用）
-        owner_repo: owner/repo 格式（view 用）
-        push: 是否推送本地内容（create 用）
-    """
-    if action == "create":
-        result = _gh_repo_create(name=name, private=private, cwd=cwd or None, push=push)
-    elif action == "view":
-        result = _gh_repo_view(cwd=cwd or ".", owner_repo=owner_repo)
-    elif action == "ci":
-        result = _gh_run_list(cwd=cwd or ".")
-    elif action == "auth":
-        result = _gh_auth_status()
-    else:
-        result = {"ok": False, "error": f"unknown action: {action}"}
-    return _json(result)
 
 
 # ═══════════════════════════════════════════════════════
@@ -714,7 +456,6 @@ def file_remove(path: str, confirm: bool = False, max_items: int = 50) -> str:
 def file_move(sources: list, dest: str, overwrite: bool = False) -> str:
     """批量移动文件/目录到目标目录。
     同分区内原子 rename（O(1)），跨分区自动退化为 copy+delete。
-    避免通过 shell_exec 逐文件 mv 导致超时。
 
     Args:
         sources: 源文件/目录路径列表
@@ -739,29 +480,6 @@ def config_diff(file1: str, file2: str) -> str:
         file2: 第二个配置文件
     """
     return _json(_config_diff(file_a=file1, file_b=file2))
-
-
-# ═══════════════════════════════════════════════════════
-# ⚙️ 执行与测试 (2)
-# ═══════════════════════════════════════════════════════
-
-@mcp.tool()
-def shell_exec(cmd: str, project_dir: str = ".", timeout: int = 120, max_lines: int = 500, dry_run: bool = False, allow_high_risk: bool = False) -> str:
-    """受限命令执行（白名单 + 高风险分级 + 路径参数沙箱校验）。
-
-    白名单: npm test/run/build/lint/install, npx jest/vitest/tsc/eslint,
-    cargo test/build/check/clippy/fmt, go test/build/vet/fmt,
-    pip install/uninstall/list/freeze, make *, pytest *, python -m pytest
-
-    Args:
-        cmd: 命令字符串（禁止 | ; && || 等 shell 控制字符）
-        project_dir: 项目目录（必须在当前工作目录下）
-        timeout: 超时秒数
-        max_lines: 输出最大行数
-        dry_run: True=仅预览不执行
-        allow_high_risk: True=允许 pip install/make 等高风险命令
-    """
-    return _json(_shell_exec(cmd=cmd, project_dir=project_dir, timeout=timeout, max_lines=max_lines, dry_run=dry_run, allow_high_risk=allow_high_risk))
 
 
 # ═══════════════════════════════════════════════════════
@@ -869,7 +587,7 @@ def symbol_rename(old_name: str, new_name: str, project_dir: str = ".", dry_run:
 
 
 # ═══════════════════════════════════════════════════════
-# 📊 系统信息 (4)
+# 📊 系统信息 (3)
 # ═══════════════════════════════════════════════════════
 
 @mcp.tool()
@@ -903,14 +621,8 @@ def sys_snapshot() -> str:
     return _json(_sys_snapshot())
 
 
-@mcp.tool()
-def tool_stats() -> str:
-    """获取工具调用统计（当前进程内计数）。"""
-    return _json(_tool_stats())
-
-
 # ═══════════════════════════════════════════════════════
-# 📝 文本处理 (8)
+# 📝 文本处理 (4)
 # ═══════════════════════════════════════════════════════
 
 @mcp.tool()
@@ -961,50 +673,6 @@ def diff_strings(a: str, b: str, context_lines: int = 3) -> str:
         context_lines: 上下文行数
     """
     return _json(_diff_strings(a=a, b=b, context_lines=context_lines))
-
-
-@mcp.tool()
-def csv_parse(text: str, delimiter: str = "auto", has_header: bool = True) -> str:
-    """CSV/TSV → 结构化数据。
-
-    Args:
-        text: CSV/TSV 文本
-        delimiter: 分隔符，auto=自动检测
-        has_header: 第一行是否为表头
-    """
-    return _json(_csv_parse(text=text, delimiter=delimiter, has_header=has_header))
-
-
-@mcp.tool()
-def csv_gen(rows: list, delimiter: str = ",") -> str:
-    """结构化数据 → CSV/TSV。
-
-    Args:
-        rows: 字典列表，每项一行
-        delimiter: 分隔符
-    """
-    return _json(_csv_gen(rows=rows, delimiter=delimiter))
-
-
-@mcp.tool()
-def md_strip(text: str) -> str:
-    """Markdown → 纯文本（去除格式标记）。
-
-    Args:
-        text: Markdown 文本
-    """
-    return _json(_md_strip(text=text))
-
-
-@mcp.tool()
-def log_parse(text: str, format: str = "auto") -> str:
-    """Nginx/Apache/syslog/JSON Lines 日志解析。
-
-    Args:
-        text: 日志文本
-        format: nginx | apache | syslog | jsonl | auto
-    """
-    return _json(_log_parse(text=text, format=format))
 
 
 # ═══════════════════════════════════════════════════════
@@ -1063,7 +731,7 @@ def time(action: str = "now", value: str = "", ts: int = 0, ms: bool = False, is
 
 
 # ═══════════════════════════════════════════════════════
-# 🧩 扩展 (7)
+# 🧩 扩展 (3)
 # ═══════════════════════════════════════════════════════
 
 @mcp.tool()
@@ -1090,16 +758,6 @@ def dep_scan(project_dir: str = ".", timeout: int = 10) -> str:
 
 
 @mcp.tool()
-def project_init(project_dir: str = ".") -> str:
-    """项目结构扫描：检测语言/框架/依赖。首次接触项目时调用。
-
-    Args:
-        project_dir: 项目目录
-    """
-    return _json(_project_init(project_dir=project_dir))
-
-
-@mcp.tool()
 def uuid_gen(kind: str = "uuid4", length: int = 16) -> str:
     """生成 UUID4 / 随机 hex / 随机 token。
 
@@ -1108,31 +766,6 @@ def uuid_gen(kind: str = "uuid4", length: int = 16) -> str:
         length: hex/token 的长度
     """
     return _json(_uuid_gen(kind=kind, length=length))
-
-
-@mcp.tool()
-def semver_compare(v1: str, v2: str) -> str:
-    """语义版本比较。
-
-    Args:
-        v1: 版本号 1
-        v2: 版本号 2
-    """
-    return _json(_semver_compare(v1=v1, v2=v2))
-
-
-@mcp.tool()
-def op_log(action: str = "recent", limit: int = 10, file: str = "", tool_name: str = "", session_id: str = "") -> str:
-    """查询操作日志（当前 MCP 服务端本地 SQLite 日志）。
-
-    Args:
-        action: recent | errors | file | stats
-        limit: 最大返回条数（1-100）
-        file: action=file 时按文件路径过滤
-        tool_name: action=recent 时按工具名过滤
-        session_id: action=recent 时按会话 ID 过滤
-    """
-    return _json(_op_log_query(action=action, limit=limit, file=file, tool_name=tool_name, session_id=session_id))
 
 
 # ═══════════════════════════════════════════════════════

@@ -16,6 +16,10 @@ _PRIVATE_NETS = [
     ipaddress.ip_network("169.254.0.0/16"),
     ipaddress.ip_network("::1/128"),
     ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("224.0.0.0/4"),
+    ipaddress.ip_network("240.0.0.0/4"),
 ]
 
 
@@ -31,15 +35,13 @@ def validate_url(url: str) -> dict | None:
         return {"ok": False, "error": "URL 缺少有效主机名"}
     try:
         ip = ipaddress.ip_address(hostname)
-        for net in _PRIVATE_NETS:
-            if ip in net:
-                return {"ok": False, "error": f"禁止访问内网地址: {hostname}"}
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+            return {"ok": False, "error": f"禁止访问内网地址: {hostname}"}
         # IPv4-mapped-IPv6: ::ffff:192.168.1.1 → 检查映射的 IPv4
         ipv4 = ip.ipv4_mapped
         if ipv4:
-            for net in _PRIVATE_NETS:
-                if ipv4 in net:
-                    return {"ok": False, "error": f"禁止访问内网地址: {hostname}"}
+            if ipv4.is_private or ipv4.is_loopback or ipv4.is_link_local or ipv4.is_multicast or ipv4.is_reserved or ipv4.is_unspecified:
+                return {"ok": False, "error": f"禁止访问内网地址: {hostname}"}
     except (AttributeError, ValueError):
         pass
     try:
@@ -48,12 +50,11 @@ def validate_url(url: str) -> dict | None:
             ip_str = addr[4][0]
             try:
                 ip = ipaddress.ip_address(ip_str)
-                for net in _PRIVATE_NETS:
-                    if ip in net:
-                        return {
-                            "ok": False,
-                            "error": f"禁止访问内网地址: {hostname} 解析到 {ip_str}",
-                        }
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+                    return {
+                        "ok": False,
+                        "error": f"禁止访问内网地址: {hostname} 解析到 {ip_str}",
+                    }
             except ValueError:
                 pass
     except socket.gaierror:
