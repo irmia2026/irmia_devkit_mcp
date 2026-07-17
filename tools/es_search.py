@@ -14,19 +14,19 @@ from pathlib import Path
 from .config import get_config
 from ._helpers import proposal_reply, _run_cmd
 
+IS_WINDOWS = os.name == "nt"
+
 
 _VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor"
 
 
 def _get_es_path() -> str:
     """获取 es.exe 路径：项目内置目录 → 配置 → PATH → 默认 es"""
-    import platform
-    is_windows = platform.system() == "Windows"
-    names = ("es.exe", "es") if is_windows else ("es", "es.exe")
+    names = ("es.exe", "es") if IS_WINDOWS else ("es", "es.exe")
     for name in names:
         candidate = str(_VENDOR_DIR / name)
         if os.path.isfile(candidate):
-            if not is_windows and not os.access(candidate, os.X_OK):
+            if not IS_WINDOWS and not os.access(candidate, os.X_OK):
                 continue
             return candidate
 
@@ -89,13 +89,11 @@ def _posix_search(
 
     # --- Layer 2: fd ---
     fd_path = None
-    import platform
-    is_windows = platform.system() == "Windows"
-    names = ("fd.exe", "fd") if is_windows else ("fd", "fd.exe")
+    names = ("fd.exe", "fd") if IS_WINDOWS else ("fd", "fd.exe")
     for name in names:
         candidate = str(_VENDOR_DIR / name)
         if os.path.isfile(candidate):
-            if not is_windows and not os.access(candidate, os.X_OK):
+            if not IS_WINDOWS and not os.access(candidate, os.X_OK):
                 continue
             fd_path = candidate
             break

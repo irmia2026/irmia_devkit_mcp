@@ -332,6 +332,35 @@ def _parser_for(framework: str):
     return _parse_pytest
 
 
+
+
+def _validate_path_args(args: list[str], cwd: Path) -> dict | None:
+    """Validate all path-like arguments stay inside the project directory."""
+    for arg in args[1:]:
+        if not arg or arg.startswith('-'):
+            continue
+        lowered = arg.replace('', '/').lower()
+        if not ('/' in lowered or '..' in lowered or arg.startswith('~') or (len(arg) >= 2 and arg[1] == ':')):
+            continue
+        if arg.startswith('~'):
+            return {'ok': False, 'error': '参数包含 ~ 展开: ' + arg}
+        pa = Path(arg)
+        if pa.is_absolute():
+            try:
+                pa.resolve().relative_to(cwd.resolve())
+            except ValueError:
+                return {'ok': False, 'error': '参数指向项目外路径: ' + arg}
+            return None
+        try:
+            resolved = (cwd / arg).resolve()
+            resolved.relative_to(cwd.resolve())
+        except ValueError:
+            return {'ok': False, 'error': '参数逃逸项目目录: ' + arg}
+        except OSError:
+            return {'ok': False, 'error': '参数路径非法: ' + arg}
+    return None
+
+
 def run(
     filepath: str = "",
     project_dir: str = ".",
@@ -351,6 +380,9 @@ def run(
         valid = _validate_command(args, allow_high_risk=False)
         if not valid.get("ok"):
             return valid
+        path_check = _validate_path_args(args, root)
+        if path_check:
+            return path_check
         exe = Path(args[0]).name.lower().removesuffix(".exe")
         framework = {"python": "pytest", "py": "pytest", "pytest": "pytest", "go": "go", "cargo": "cargo", "npx": "jest", "npm": "npm"}.get(exe, framework)
 
