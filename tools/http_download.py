@@ -25,21 +25,17 @@ _MAX_DOWNLOAD_SIZE = 500 * 1024 * 1024  # H5: 500MB 上限
 
 
 def _resolve_path(path: str) -> Path:
-    """解析保存路径。
-
-    - 绝对路径：直接使用（路径穿越由统一检查拦截）
-    - 相对路径：放入 ~/.irmia/downloads/ 沙箱防遍历
-    """
+    """解析保存路径。绝对路径直接使用，相对路径相对于当前目录。
+    路径穿越（..）被拒绝。无路径时使用默认沙箱。"""
+    if not path or not path.strip():
+        sandbox = _DOWNLOAD_SANDBOX.resolve()
+        sandbox.mkdir(parents=True, exist_ok=True)
+        return sandbox / "download"
     if ".." in path.replace("\\", "/").split("/"):
         raise ValueError("路径包含 .. 穿越，已被拒绝")
     if Path(path).is_absolute():
         return Path(path).resolve()
-    sandbox = _DOWNLOAD_SANDBOX.resolve()
-    safe_name = Path(path).name or "download"
-    resolved = (sandbox / safe_name).resolve()
-    if str(resolved).startswith(str(sandbox)):
-        return resolved
-    return sandbox / "download"
+    return (Path.cwd() / path).resolve()
 
 
 def download(url: str, path: str, overwrite: bool = False, timeout: int = 60) -> dict:
