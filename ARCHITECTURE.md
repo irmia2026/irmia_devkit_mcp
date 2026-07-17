@@ -1,127 +1,141 @@
-# Architecture — Irmia DevKit MCP
+# Architecture
 
-> 本文档描述 `irmia_devkit_mcp` 的架构设计、关键决策和内部机制。
-> 面向需要理解项目结构或贡献代码的开发者。用户文档见 [README.md](README.md)。
+This document describes the internal design of `irmia_devkit_mcp`: project layout, data flow, and the decisions that shape the codebase. For usage instructions see [README.md](README.md); for contribution guidelines see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Project Structure
+## Project layout
 
 ```
 irmia_devkit_mcp/
-├── server.py                     # MCP 入口：44 工具注册，FastMCP 启动
-├── __main__.py                   # `python -m irmia_devkit_mcp`
-├── pyproject.toml                # Python 包元数据
-├── package.json                  # npm 发布配置
-├── bin/                          # Shell 启动脚本 (irmia-devkit.cmd / .sh)
-├── tools/                        # 工具实现（与 irmia_devkit_open 共享）
-│   ├── safe_edit.py              # 备份 → 替换 → 语法检查 → 回滚
-│   ├── safe_read.py              # 增强文件读取（编码/hex/skeleton）
-│   ├── codegraph.py              # 语义索引 + 符号搜索 + 调用链
-│   ├── auto_config.py            # 外部工具自动检测 + 配置文件管理
-│   ├── config.py                 # 全局配置单例
-│   ├── _helpers.py               # proposal_reply, _run_cmd 等共享助手
-│   ├── _file_utils.py            # 文件工具共享函数
-│   └── ... (49 工具模块)
-├── vendor/                       # 可内置 rg.exe / es.exe / fd.exe
-├── tests/                        # 38 个 pytest 测试文件
-├── README.md                     # 用户文档
-├── CHANGELOG.md                  # 版本历史 (Keep a Changelog)
-└── ARCHITECTURE.md               # 本文档
+├── server.py                # MCP entry point: 44 tool registrations, FastMCP startup
+├── __main__.py              # `python -m irmia_devkit_mcp`
+├── pyproject.toml           # Python package metadata (setuptools)
+├── package.json             # npm-side metadata for MCP client registries
+├── bin/                     # Launcher scripts (irmia-devkit.cmd / irmia-devkit.sh)
+├── tools/                   # Tool implementations (synced from irmia_devkit_open)
+│   ├── safe_edit.py         # backup → replace → syntax check → rollback
+│   ├── safe_read.py         # enhanced file reading (encoding / hex / skeleton)
+│   ├── codegraph.py         # semantic index, symbol search, call chains
+│   ├── auto_config.py       # external-tool detection + config file management
+│   ├── config.py            # global configuration singleton
+│   ├── _helpers.py          # proposal_reply, _run_cmd and shared helpers
+│   ├── _http_utils.py       # SSRF validation shared by http_get / http_download
+│   ├── _file_utils.py       # shared file utilities
+│   └── ... (49 modules)
+├── vendor/                  # Optional bundled binaries (rg / fd / es, per-platform)
+├── tests/                   # 38 pytest files, one per tool module
+├── README.md                # User documentation
+├── CHANGELOG.md             # Version history (Keep a Changelog)
+├── CONTRIBUTING.md          # Contributor guide
+└── ARCHITECTURE.md          # This document
 ```
 
-## Data Flow
+## Data flow
 
 ```
-MCP Client (Claude Code / Cursor / Windsurf / ...)
-    │  JSON-RPC over stdio | SSE (localhost HTTP)
+MCP client (Claude Code / Cursor / Windsurf / ...)
+    │  JSON-RPC over stdio │ SSE on localhost
     ▼
-server.py ── FastMCP 主机
-    │  @mcp.tool()
+server.py ── FastMCP host
+    │  @mcp.tool() registration
     ▼
-tools/*.py ── 纯函数实现
-    │  返回 dict → _json() → JSON 字符串 → MCP 响应
+tools/*.py ── pure-function implementations
+    │  dict result → _json() → JSON string → MCP response
     ▼
-MCP Client ── LLM 解析结构化结果
+MCP client ── LLM consumes structured result
 ```
 
-## Key Design Decisions (ADR)
+Tool implementations are pure functions returning plain dicts. `server.py` is a thin registration layer: it imports the functions, wraps them with `@mcp.tool()`, and serializes results. No business logic lives in the server layer.
 
-### ADR-1: 纯函数 + 薄包装层
+## Design decisions
 
-**决策**：所有业务逻辑在 `tools/*.py` 中实现为纯函数；`server.py` 仅做 MCP 注册和结果序列化。
+### ADR-1 — Pure functions plus a thin registration layer
 
-**理由**：与上游 `irmia_devkit_open` 共享工具实现，MCP 版本只需维护包装层。同步上游时不需要修改 `server.py`。
+**Decision.** All behavior lives in `tools/*.py` as importable functions; `server.py` only registers them with FastMCP and serializes results.
 
-### ADR-2: 本地部署锁定
+**Rationale.** Tool implementations are shared verbatim with `irmia_devkit_open`. Keeping the MCP layer a pure wrapper means upstream syncs never touch `server.py`.
 
-**决策**：启动时检查 `--host` 参数，仅允许 `127.0.0.1` / `localhost` / `::1`。
+### ADR-2 — Localhost-only binding
 
-**理由**：所有文件系统工具操作的是运行服务器的机器。共享部署会导致文件路径泄露和操作日志污染。
+**Decision.** At startup, `--host` is validated against `{127.0.0.1, localhost, ::1}`; anything else exits with code 1.
 
-### ADR-3: 外部工具自动配置
+**Rationale.** Every filesystem tool operates on the machine running the server. Binding to a routable address would expose arbitrary host paths and file contents to the network. This is enforced in code, not configuration, so it cannot be disabled by mistake.
 
-**决策**：启动时自动扫描项目内置 `vendor/` 目录和系统 PATH 中的 `es` / `rg` / `fd`，写入 `~/.irmia/mcp_config.json`。用户可手动编辑。扫描不到时打印安装指引。
+### ADR-3 — Vendor-first binary resolution
 
-**理由**：零配置开箱即用；内置二进制优先于系统 PATH，便于离线部署。同时给高级用户手动控制权。跨平台：Windows 扫描 Everything，Linux / macOS 自动使用 `locate` / `fd` 回退。
+**Decision.** External executables (`rg`, `fd`, `es`) are resolved in this order: project `vendor/` → PATH → well-known install locations. On Windows `.exe` is preferred; on POSIX systems the extensionless binary is preferred and non-executable candidates are skipped.
 
-### ADR-4: 提案协议 (Proposal Protocol)
+**Rationale.** Shipping known-good binaries in `vendor/` makes the server work offline and produces reproducible behavior across machines. PATH fallback keeps the server usable in a stock environment; the pure-Python fallbacks in `rg_search` / `es_search` keep it functional with no external tools at all.
 
-**决策**：工具失败或歧义时返回结构化 JSON `{proposal, evidence, options, next_call}`，引导 LLM 下一步操作，而非简单报错退出。
+### ADR-4 — Proposal protocol for recoverable failures
 
-**理由**：LLM 需要上下文来做下一步决策。裸 `{"ok": false, "error": "xxx"}` 会导致 LLM 盲目重试或放弃。
+**Decision.** When a tool cannot proceed but the situation is resolvable (ambiguity, missing confirmation, oversized batch), it returns a structured proposal `{proposal, evidence, options, next_call}` instead of a bare error.
 
-## Configuration System
+**Rationale.** The caller is an LLM. A bare `{"ok": false, "error": "..."}` gives it nothing to plan with; a structured proposal tells it exactly what to ask the user or which tool to call next. See [CONTRIBUTING.md](CONTRIBUTING.md#return-value-conventions) for the full contract.
+
+### ADR-5 — Configuration as a layered singleton
+
+**Decision.** `tools/config.py` holds a process-wide dict populated at startup by `tools/auto_config.py`. Precedence: environment variables → `~/.irmia/mcp_config.json` → auto-scan → defaults.
+
+**Rationale.** Tool modules must not re-scan the filesystem on every call; a single config load at startup keeps per-call latency at zero while remaining user-overridable.
 
 ```
-启动流程:
-  1. load_config() → 读 ~/.irmia/mcp_config.json
-  2. scan_tools()  → 自动检测 vendor/ → PATH → 常见安装路径中的 es/rg/fd
-  3. 填充空路径 → 写回 mcp_config.json
-  4. set_config()  → 注入全局 config 单例
-  5. check_and_warn() → 缺失工具打印安装指引
-  6. print_startup_banner() → 显示工具状态
-
-优先级链:
-  环境变量 > mcp_config.json 手动填写 > 自动扫描 > 默认值
+Startup sequence:
+  1. load_config()       → read ~/.irmia/mcp_config.json
+  2. scan_tools()        → detect vendor/ → PATH → well-known paths (rg / fd / es)
+  3. fill empty paths    → write back to mcp_config.json when new tools are found
+  4. set_config()        → inject into the global config singleton
+  5. check_and_warn()    → print install guidance for missing tools
+  6. print_startup_banner() → display resolved tool status
 ```
 
-## Deployment Modes
+## Deployment modes
 
 | Mode | Command | Transport | Scope |
 |------|---------|-----------|-------|
-| stdio | `python server.py` | stdin/stdout | 单 Agent |
-| HTTP (local) | `python server.py --http` | SSE on 127.0.0.1 | 本地浏览器客户端 |
-| ❌ Remote | `--host 0.0.0.0` | **Rejected** | 被启动保护拦截 |
+| stdio | `python server.py` | stdin/stdout | Single agent (default for MCP clients) |
+| HTTP (local) | `python server.py --http` | SSE on 127.0.0.1 | Local browser-based clients |
+| Remote | `--host 0.0.0.0` | **rejected** | Blocked at startup (ADR-2) |
 
-## Tool Registration Pattern
+## Tool registration pattern
 
 ```python
-# server.py 中的每个工具都遵循此模式：
 @mcp.tool()
 def safe_edit(filepath: str, old: str, new: str, ...) -> str:
-    """Docstring → MCP 工具描述"""
+    """Docstring → surfaced to the MCP client as the tool description.
+
+    Args:
+        ... (Args section becomes the parameter schema documentation)
+    """
     result = _safe_edit(filepath, old, new, ...)
     if result.get("ok") and ...:
-        _auto_index(filepath)   # best-effort 语义索引更新
+        _auto_index(filepath)   # best-effort semantic index refresh
     return _json(result)
 ```
+
+Rules every registration follows:
+
+- Return `str` (JSON via `_json()`), never raise.
+- The implementing function lives in `tools/` and returns a plain dict.
+- Side effects beyond the primary purpose (e.g. index refresh) are best-effort and must not affect the result.
 
 ## Dependencies
 
 | Required | Optional |
 |----------|----------|
-| Python ≥ 3.10 | chardet（更好编码检测） |
-| `mcp>=1.0.0` | psutil（进程列表） |
-| | tree-sitter（多语言代码索引） |
-| | ripgrep（快速内容搜索） |
-| | beautifulsoup4（HTML 提取） |
-| | Everything CLI / fd（快速文件名搜索） |
+| Python ≥ 3.10 | chardet — better encoding detection in `safe_read` |
+| `mcp>=1.0.0` | psutil — process listing in `proc_list` |
+| | tree-sitter — multi-language indexing in `code_index` |
+| | ripgrep / fd / Everything CLI — accelerated search |
+| | beautifulsoup4 — HTML table extraction in `html_extract` |
 
-40+ 工具纯 Python 标准库实现，零外部依赖。
+40+ tools run on the standard library alone. Optional dependencies degrade gracefully; nothing fails hard when they are missing.
 
-## Sync Strategy with Upstream
+## Testing
 
-MCP 仓库定期从 `irmia_devkit_open` 同步 `tools/` 和 `tests/`。MCP 专属文件（`server.py`, `auto_config.py`, `__main__.py`, `package.json`, `bin/`）保持不变。
+- 38 pytest files, one per tool module, in `tests/`.
+- Shared fixtures in `tests/conftest.py`: config reset, temp directories/files, mock system calls.
+- External processes (ripgrep, Everything) are exercised when present and skipped when absent; the test suite is green in both environments.
 
-同步内容：
-- 所有 `tools/*.py`（工具实现）
-- 选定的 `tests/*.py`（排除 AstrBot 特定测试）
+## Upstream sync strategy
+
+`tools/` and `tests/` are synced from `irmia_devkit_open`. MCP-specific files — `server.py`, `tools/auto_config.py`, `tools/config.py` customizations, `__main__.py`, `package.json`, `bin/`, `vendor/` — are maintained in this repository only. Upstream releases that remove or rename tools require a corresponding registration change in `server.py`; everything else is a drop-in copy.

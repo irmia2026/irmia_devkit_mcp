@@ -1,16 +1,29 @@
 # Contributing
 
-## 环境
+This guide covers everything needed to add a tool, fix a bug, or prepare a release. For architecture context see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Development setup
 
 ```bash
 git clone https://github.com/irmia2026/irmia_devkit_mcp.git
 cd irmia_devkit_mcp
-pip install -e . && pip install pytest
+pip install -e .
+pip install pytest
 ```
 
-## 新增工具
+Run the suite:
 
-### 1. 创建模块
+```bash
+pytest tests/ -v
+```
+
+The suite is green with and without the optional external binaries (ripgrep, fd, Everything CLI). Tests that need them skip automatically.
+
+## Adding a tool
+
+### 1. Create the implementation module
+
+Every tool is a pure function in `tools/` that returns a dict and never raises:
 
 ```python
 # tools/my_tool.py
@@ -21,88 +34,88 @@ def do_something(param: str) -> dict:
     if not param:
         return {"ok": False, "error": "param must not be empty"}
 
-    if need_choice:
+    if ambiguous:
         return proposal_reply(
             False,
-            "多个选项，选择一个",
-            evidence={"count": 3},
-            options=["选项 A", "选项 B"],
+            "Multiple candidates found — pick one",
+            evidence={"candidates": 3},
+            options=["candidate A", "candidate B"],
         )
 
     return {"ok": True, "result": f"processed: {param}"}
 ```
 
-### 2. 注册到 server.py
+### 2. Register it in `server.py`
 
 ```python
 from tools.my_tool import do_something as _do_something
 
 @mcp.tool()
 def my_action(param: str) -> str:
-    """何时调用此工具的一句话描述。
+    """One sentence telling the agent when to call this tool.
 
     Args:
-        param: 参数说明
+        param: What this parameter controls
     """
-    result = _do_something(param)
-    return json.dumps(result, ensure_ascii=False)
+    return _json(_do_something(param))
 ```
 
-### 3. 运行测试
+The docstring is the tool's public contract: the first paragraph becomes the description shown to the agent, and the `Args:` section documents the schema. Keep it accurate — the LLM reads it verbatim.
 
-```bash
-pytest tests/ -v
-```
+### 3. Add tests
 
-## 返回值规范
+Create `tests/test_my_tool.py` following the existing per-module pattern. Use the fixtures from `tests/conftest.py` (`tmp_dir`, `tmp_py_file`, `project_dir`, …) rather than writing ad-hoc temp files.
 
-三形态，靠 bottom 函数返回的 dict 中是否存在特定 key 分流：
+### 4. Update documentation
 
-| 形态 | 条件 | 示例 |
-|------|------|------|
-| 纯成功 | ok=True，无特殊 key | {"ok": True, "result": "..."} |
-| 纯错误 | ok=False，无特殊 key | {"ok": False, "error": "无法读取"} |
-| 提案协议 | 含 proposal / options / evidence / next_call / stdout / stderr 任一 | {"ok": False, "proposal": "...", "options": [...]} |
+- Add the tool to the overview table in [README.md](README.md).
+- Note the addition in [CHANGELOG.md](CHANGELOG.md) under `[Unreleased]`.
 
-**关键规则：**
+## Return-value conventions
 
-- 永远 return dict，不 raise。工具函数和工具内调用的子函数都一样。
-- proposal + options 成对出现。evidence 有数据时必带。
-- next_call 格式：{"tool": "tool_name", "params": {...}}。
-- 破坏性操作（删除、高风险命令）用 proposal (ok=False) + boolean 确认参数做两段式。LLM 必须修改参数重试。
+Every tool result is a dict matching one of three shapes:
 
-## 安全
+| Shape | Condition | Example |
+|-------|-----------|---------|
+| Success | `ok=True`, no special keys | `{"ok": True, "result": "..."}` |
+| Error | `ok=False`, no special keys | `{"ok": False, "error": "cannot read file"}` |
+| Proposal | contains any of `proposal`, `options`, `evidence`, `next_call` | `{"ok": False, "proposal": "...", "options": [...]}` |
 
-| 关注点 | 文件 | 方式 |
-|--------|------|------|
-| 命令注入 | shell_exec.py | DANGEROUS_RAW 黑名单 (| ; & || > < $( ` 
- 
- %) + 白名单命令 |
-| SSRF | _http_utils.py | URL->IP->DNS->重定向 四层检测 |
-| 路径穿越 | file_remove.py | .. 检测 + resolve() + 系统目录黑名单 |
-| ZIP slip | file_zip.py | target_dir/entry_name resolve 前缀验证 |
-| SQL 注入 | db_query.py | SELECT/PRAGMA 白名单 + mode=ro + 参数化 |
+Rules:
 
-## 依赖管理
+- **Never raise.** Return the error as a dict, from the tool function and from every helper it calls.
+- `proposal` and `options` always appear together; include `evidence` whenever there is concrete data to show.
+- `next_call` has the form `{"tool": "tool_name", "params": {...}}` when the fix is a different tool invocation.
+- Destructive operations (deletion, overwrite, anything irreversible) use a two-phase pattern: first call returns `ok=False` with a proposal, the agent must re-call with an explicit confirmation parameter (`confirm=true`, `overwrite=true`, …).
 
-纯 Python 标准库工具 49 个。8 个工具需要外部程序——未安装时优雅降级，不阻塞：
+## Security checklist
 
-| 工具 | 需外部程序 | 降级行为 | 自动安装 |
-|------|-----------|---------|:--:|
-| rg_search | ripgrep | Python os.walk 扫描 | — |
-| es_search | Everything/locate/fd | Python os.walk 扫描 | — |
-| gh_* (4个) | GitHub CLI | 返回安装指引 | — |
-| lint_runner | ruff/pylint/eslint | 自动 fallback | — |
-| syntax_check | go/nim/node | skipped=true | — |
-| test_runner | go/cargo/node | 回退 pytest | — |
-| code_index | tree-sitter-* | 跳过非 Python | — |
-| html_extract | beautifulsoup4 | 返回安装指引 | pip install bs4 |
+| Concern | Where | Mechanism |
+|---------|-------|-----------|
+| SSRF | `tools/_http_utils.py` | scheme allowlist → IP-range blocklist (`ipaddress.is_private` et al.) → DNS-resolution re-check → per-redirect re-check |
+| Path traversal | `tools/file_remove.py`, `tools/safe_edit.py`, … | `..` segment rejection + `resolve()` prefix validation + system-directory blocklist |
+| ZIP slip | `tools/file_zip.py` | per-entry `resolve()` prefix check against the target directory |
+| SQL injection | `tools/db_query.py` | SELECT/PRAGMA allowlist, read-only mode, parameterized queries |
+| Command injection | `tools/test_runner.py` | allowlisted executables/subcommands, shell-control-character rejection, `shell=False` |
+| Binary hijacking | `tools/auto_config.py` | `vendor/` path derived from `__file__`, never from the working directory |
 
-启动脚本 (bin/) 会自动 pip install mcp。其余外部程序由用户按需安装。
+When you touch any of these files, extend the corresponding tests rather than weakening a check to make a test pass.
 
-## 发布检查清单
+## Dependency policy
 
-- [ ] python server.py — 正常启动 stdio
-- [ ] python server.py --http — 正常启动 HTTP SSE
-- [ ] 57 工具全部注册
-- [ ] 安全门禁通过 (& % | ; 被 reject)
+The standard library is the default. Before adding a third-party dependency:
+
+1. Check whether the dependency is optional and degrades gracefully (like `psutil` or `beautifulsoup4`).
+2. If it is required, discuss first — `mcp` is currently the only required dependency.
+3. External executables must be resolvable through `tools/auto_config.py` and must have a pure-Python fallback path.
+
+## Release checklist
+
+- [ ] `pytest tests/ -q` — fully green
+- [ ] `python server.py` — starts on stdio, banner shows resolved tools
+- [ ] `python server.py --http` — starts SSE on 127.0.0.1
+- [ ] Tool count in README table matches `@mcp.tool()` registrations in `server.py`
+- [ ] Version bumped consistently in `pyproject.toml` and `package.json`
+- [ ] `CHANGELOG.md` — `[Unreleased]` section renamed to the new version, fresh `[Unreleased]` added
+- [ ] `python -m pip wheel --no-deps -w dist .` — wheel builds cleanly
+- [ ] Tag: `git tag -a vX.Y.Z -m "vX.Y.Z"` and push with `--tags`

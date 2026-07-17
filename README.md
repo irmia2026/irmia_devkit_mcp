@@ -5,33 +5,33 @@
 <h1 align="center">Irmia DevKit MCP</h1>
 
 <p align="center">
-  <strong>为 AI 编码 Agent 提供 44 个安全开发工具 — 纯本地 · 零配置 · 开箱即用</strong><br />
-  <sub>安全编辑 · 语义索引 · 文件搜索 · 测试运行 · 系统信息</sub>
+  <strong>44 safe development tools for AI coding agents — local-only, zero-config, batteries included.</strong><br />
+  <sub>Safe editing · Semantic code index · File search · Test runner · System info</sub>
 </p>
 
 <p align="center">
   <a href="https://github.com/irmia2026/irmia_devkit_mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/Python-3.10+-blue.svg" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/MCP-1.0+-green.svg" /></a>
+  <a href="#"><img src="https://img.shields.io/badge/Python-3.10%2B-blue.svg" /></a>
+  <a href="#"><img src="https://img.shields.io/badge/MCP-1.0%2B-green.svg" /></a>
   <a href="#"><img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg" /></a>
 </p>
 
 ---
 
-> **这是什么？** 把 `irmia_devkit_open` 的 44 个开发工具，打包成一个 MCP Server。你的 AI Agent（Claude Code / Cursor / Codex / Windsurf 等）可以通过 MCP 协议直接调用 `safe_edit`、`code_explore` 等工具——就像给 Agent 配了一把瑞士军刀。
+`irmia_devkit_mcp` packages 44 battle-tested development tools from [`irmia_devkit_open`](https://github.com/irmia2026/irmia_devkit_open) as a standalone [Model Context Protocol](https://modelcontextprotocol.io/) server. Any MCP-compatible agent — Claude Code, Cursor, Codex, Windsurf — can call `safe_edit`, `code_explore`, `rg_search` and friends as first-class tools, with hardened security defaults out of the box.
 
-## ✨ 为什么选它
+## Why this server
 
-| 特性 | 说明 |
-|------|------|
-| 🔒 **本地专用** | 拒绝非 localhost 绑定，数据不出本机 |
-| ⚡ **零配置** | 自动扫描项目内置 `vendor/` 目录或系统 PATH 中的 `es` / `rg` / `fd`，生成配置文件 |
-| 🛡️ **安全第一** | SSRF 四层防护 · 编辑自动备份回滚 · 统一路径穿越检查 |
-| 🧠 **语义索引** | Python AST 解析 + SQLite FTS5，秒级代码搜索 |
-| 📦 **44 工具** | 覆盖编辑 / 搜索 / 测试 / 代码智能 / 网络 / 文件 / 文本处理 |
-| 🌍 **跨平台** | Windows / Linux / macOS 均可用 |
+| Feature | What it means |
+|---------|---------------|
+| 🔒 **Local-only** | Refuses to bind to anything but `127.0.0.1` / `localhost` / `::1`. Your files never leave the machine. |
+| ⚡ **Zero config** | Bundled `vendor/` binaries (`rg`, `fd`, `es`) are picked up automatically; falls back to PATH, then to pure-Python implementations. |
+| 🛡️ **Defense in depth** | Four-layer SSRF filtering, automatic edit backups with rollback, unified path-traversal checks on every file operation. |
+| 🧠 **Semantic index** | Python AST + SQLite FTS5 — symbol search, call chains, and impact analysis in milliseconds. |
+| 📦 **44 tools** | Editing, search, testing, code intelligence, networking, files, encoding, time, text processing, system info. |
+| 🌍 **Cross-platform** | Windows, Linux, macOS. Platform-aware binary resolution (`*.exe` on Windows, native ELF elsewhere). |
 
-## 🚀 30 秒快速开始
+## Quick start
 
 ```bash
 git clone https://github.com/irmia2026/irmia_devkit_mcp.git
@@ -40,10 +40,10 @@ pip install mcp
 python server.py
 ```
 
-启动后自动扫描本地工具并生成 `~/.irmia/mcp_config.json`。然后将以下配置添加到你的 MCP 客户端：
+On first launch the server scans `vendor/` and PATH for `rg` / `fd` / `es` and writes `~/.irmia/mcp_config.json`. Point your MCP client at the server:
 
-### Cursor
-`~/.cursor/mcp.json`:
+### Cursor — `~/.cursor/mcp.json`
+
 ```json
 {
   "mcpServers": {
@@ -55,8 +55,8 @@ python server.py
 }
 ```
 
-### Claude Desktop
-`~/.claude/settings.json`:
+### Claude Desktop — `~/.claude/settings.json`
+
 ```json
 {
   "mcpServers": {
@@ -68,79 +68,78 @@ python server.py
 }
 ```
 
-### HTTP 模式（本地浏览器客户端）
+### HTTP mode (local browser clients)
+
 ```bash
 python server.py --http --port 8000
 # → http://127.0.0.1:8000/mcp
 ```
 
-> ⚠️ `--host` 仅接受 `127.0.0.1` / `localhost` / `::1`，远程部署会被拒绝启动。这是安全设计，不是 bug。
+> ⚠️ `--host` only accepts `127.0.0.1` / `localhost` / `::1`. Remote binding is rejected at startup — this is by design, not a bug.
 
-## 📋 工具总览
+## Tool overview
 
-| # | 分组 | 核心工具 |
-|:--:|------|----------|
-| 10 | 🔒 安全编辑链 | `safe_edit` `safe_write` `safe_backups` `safe_rollback` `file_patch` `file_preview` `syntax_check` `lint_runner` `test_runner` `multi_edit` |
-| 13 | 📂 文件系统 | `safe_read` `es_search` `rg_search` `dir_tree` `dir_list` `file_diff` `file_hash` `file_zip` `file_unzip` `file_move` `file_remove` `disk_info` `config_diff` |
-| 6 | 🧠 代码智能 | `code_index` `code_explore` `code_pack` `code_diff_impact` `code_status` `symbol_rename` |
-| 3 | 📊 系统信息 | `port_check` `proc_list` `sys_snapshot` |
-| 4 | 📝 文本处理 | `html_extract` `json_query` `text_filter` `diff_strings` |
-| 5 | 🔧 编码 / 时间 / 扩展 | `encode_decode` `time` `db_query` `dep_scan` `uuid_gen` |
-| 3 | 🌐 网络 | `http_get` `http_post` `http_download` |
+| # | Group | Tools |
+|---|-------|-------|
+| 10 | 🔒 Safe editing | `safe_edit` `safe_write` `safe_backups` `safe_rollback` `file_patch` `file_preview` `syntax_check` `lint_runner` `test_runner` `multi_edit` |
+| 13 | 📂 Filesystem | `safe_read` `es_search` `rg_search` `dir_tree` `dir_list` `file_diff` `file_hash` `file_zip` `file_unzip` `file_move` `file_remove` `disk_info` `config_diff` |
+| 6 | 🧠 Code intelligence | `code_index` `code_explore` `code_pack` `code_diff_impact` `code_status` `symbol_rename` |
+| 3 | 📊 System info | `port_check` `proc_list` `sys_snapshot` |
+| 4 | 📝 Text processing | `html_extract` `json_query` `text_filter` `diff_strings` |
+| 5 | 🔧 Encoding / time / misc | `encode_decode` `time` `db_query` `dep_scan` `uuid_gen` |
+| 3 | 🌐 Networking | `http_get` `http_post` `http_download` |
 
-## ⚙️ 外部工具自动检测
+## External tool resolution
 
-首次启动后生成 `~/.irmia/mcp_config.json`：
+Search order: **project `vendor/` → PATH → well-known install locations**. Linux/macOS binaries must be executable; Windows `.exe` files are preferred on Windows and skipped elsewhere.
 
 ```json
+// ~/.irmia/mcp_config.json (auto-generated, user-editable)
 {
-  "es_path": "D:\\Program Files\\Everything\\es.exe",
-  "rg_path": "/usr/bin/rg",
+  "es_path": "D:\\path\\to\\irmia_devkit_mcp\\vendor\\es.exe",
+  "rg_path": "D:\\path\\to\\irmia_devkit_mcp\\vendor\\rg.exe",
+  "fd_path": "D:\\path\\to\\irmia_devkit_mcp\\vendor\\fd.exe",
   "backup_dir": "C:\\Users\\...\\.irmia\\backups"
 }
 ```
 
-| 机制 | 说明 |
-|------|------|
-| 🔍 自动扫描 | 项目 `vendor/` → PATH → 常见安装路径 → 自动写入 config |
-| ✏️ 手动填写 | 编辑 `mcp_config.json`，立即生效 |
-| ⚠️ 安装指引 | 扫不到时打印下载链接和安装命令 |
-| 🌍 跨平台 | Linux / macOS 下 `es_path` 自动回退 `locate` / `fd`，不报警 |
+| Tool | Windows | Linux / macOS | No external dependency |
+|------|---------|---------------|------------------------|
+| `es_search` | Everything CLI (requires the Everything service) | `locate` → `fd` → Python fallback | Python `os.walk` |
+| `rg_search` | ripgrep | ripgrep | Pure-Python scanner |
 
-| 工具 | Windows | Linux / macOS | 无依赖时 |
-|------|---------|---------------|----------|
-| `es_search` | Everything CLI（需 Everything 服务） | `locate` → `fd` → Python 回退 | Python `os.walk` |
-| `rg_search` | ripgrep | ripgrep | Python 纯标准库 |
+Precedence: environment variable (`IRMIA_ES_PATH`, `IRMIA_RG_PATH`, `IRMIA_FD_PATH`, `IRMIA_BACKUP_DIR`) → manual `mcp_config.json` values → auto-scan → built-in defaults.
 
-## 🛡️ 安全设计
+## Security model
 
-| 层级 | 机制 |
-|------|------|
-| **编辑** | 自动备份 → 替换 → 语法检查 → 失败自动回滚 |
-| **网络** | SSRF 四层防护：IP 黑名单 + 内网拦截 + DNS 解析校验 + 重定向重新校验 |
-| **SQL** | `db_query` 只读 + 参数化查询，防注入 |
-| **路径** | 所有文件操作统一路径穿越检查 |
-| **部署** | 拒绝非 localhost 绑定，防止远程访问 |
+| Layer | Mechanism |
+|-------|-----------|
+| Editing | Backup → replace → syntax check → rollback on failure |
+| Network | SSRF defense in depth: scheme allowlist, IP-range blocklist (incl. `0.0.0.0/8`, multicast, reserved), DNS-resolution re-validation, per-redirect re-validation |
+| SQL | `db_query` read-only, SELECT/PRAGMA allowlist, parameterized queries |
+| Paths | `..` traversal rejection + `resolve()` prefix validation + system-directory blocklist |
+| Deployment | Non-localhost binding refused at startup |
 
-## 📖 更多文档
+## Documentation
 
-| 文档 | 内容 |
-|------|------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 项目结构、数据流、关键设计决策 |
-| [CHANGELOG.md](CHANGELOG.md) | 完整版本历史（Keep a Changelog 格式） |
+| Document | Contents |
+|----------|----------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Project layout, data flow, design decisions |
+| [CHANGELOG.md](CHANGELOG.md) | Version history (Keep a Changelog) |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Adding tools, return-value conventions, security checklist |
 | [LICENSE](LICENSE) | MIT |
 
-## ❓ FAQ
+## FAQ
 
-**Q: 和 `irmia_devkit_open` 什么关系？**
-A: `irmia_devkit_mcp` 是 MCP 协议版本，工具实现同步自 `irmia_devkit_open`，但作为独立 MCP Server 运行，不依赖 AstrBot。
+**How does this relate to `irmia_devkit_open`?**
+`irmia_devkit_mcp` is the MCP-packaged edition. Tool implementations are synced from upstream; the server runs standalone without AstrBot.
 
-**Q: 需要装什么依赖？**
-A: Python ≥ 3.10 + `mcp>=1.0.0`。40+ 工具纯标准库实现，可选依赖见上方表格。
+**What do I need to install?**
+Python ≥ 3.10 and `mcp>=1.0.0`. 40+ tools are pure standard library; optional binaries accelerate search but are never required.
 
-**Q: 能部署到服务器上多人共享吗？**
-A: 不能，也不应该。本 MCP Server 锁定本地部署（拒绝非 localhost 绑定），所有工具操作的是运行服务器的机器文件系统。共享部署会暴露主机文件路径和操作日志。
+**Can I deploy this on a shared server?**
+No — by design. The server only binds to localhost, and every filesystem tool operates on the machine it runs on. Shared deployment would leak host paths and file contents.
 
-## 📄 License
+## License
 
 MIT © irmia2026
