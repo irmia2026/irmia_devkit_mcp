@@ -212,15 +212,17 @@ def check_and_warn(config: dict[str, Any], *, silent: bool = False) -> list[str]
         if not config.get(path_key):
             missing.append(key)
             if not silent:
-                print(f"\n[!] 未检测到 {key} -- {path_key} 为空")
-                print(f"    对应的外部工具: {guide.split(chr(10))[0]}")
-                print(f"    详细安装指引见: ~/.irmia/mcp_config.json")
-                print(f"    {guide}")
+                print(f"\n[!] 未检测到 {key} -- {path_key} 为空", file=sys.stderr)
+                print(f"    对应的外部工具: {guide.split(chr(10))[0]}", file=sys.stderr)
+                print(f"    详细安装指引见: ~/.irmia/mcp_config.json", file=sys.stderr)
+                print(f"    {guide}", file=sys.stderr)
     return missing
 
 
-def print_startup_banner(config: dict[str, Any]) -> None:
-    """启动横幅：工具状态一览。"""
+def print_startup_banner(config: dict[str, Any], *, quiet: bool = False) -> None:
+    """启动横幅：工具状态一览。quiet=True 时静默（stdio 模式必须保持 stdout 纯净）。"""
+    if quiet:
+        return
     tools_status = []
     for key in ("es_path", "rg_path", "fd_path"):
         name = key.replace("_path", "")
@@ -245,4 +247,4 @@ def print_startup_banner(config: dict[str, Any]) -> None:
 +======================================================================+
 |  配置文件: {str(CONFIG_PATH):<55s} |
 +======================================================================+
-""")
+""", file=sys.stderr)

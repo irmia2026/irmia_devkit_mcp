@@ -776,8 +776,6 @@ def main():
     """MCP 入口。默认 stdio；传 --http 则启动 HTTP 服务。"""
     import argparse
 
-    print_startup_banner(_mcp_config)
-
     ap = argparse.ArgumentParser(description="Irmia DevKit MCP Server")
     ap.add_argument("--http", action="store_true", help="以 HTTP streamable 模式启动 (默认 stdio)")
     ap.add_argument("--port", type=int, default=8000, help="HTTP 端口 (默认 8000)")
@@ -785,17 +783,21 @@ def main():
     args = ap.parse_args()
 
     if args.http:
+        print_startup_banner(_mcp_config, quiet=False)
         if args.host not in ("127.0.0.1", "localhost", "::1"):
             print(
                 f"❌ irmia-devkit-mcp 仅支持本地部署。"
-                f"不允许 --host={args.host}（仅允许 127.0.0.1 / localhost / ::1）。"
+                f"不允许 --host={args.host}（仅允许 127.0.0.1 / localhost / ::1）。",
+                file=sys.stderr,
             )
             sys.exit(1)
-        print(f"Irmia DevKit MCP HTTP -> http://{args.host}:{args.port}/mcp  (本地专用)")
+        print(f"Irmia DevKit MCP HTTP -> http://{args.host}:{args.port}/mcp  (本地专用)", file=sys.stderr)
         mcp.settings.host = args.host
         mcp.settings.port = args.port
         mcp.run(transport="sse")
     else:
+        # stdio 模式：stdout 只传 JSON-RPC，横幅静默（诊断信息一律走 stderr）
+        print_startup_banner(_mcp_config, quiet=True)
         mcp.run(transport="stdio")
 
 
