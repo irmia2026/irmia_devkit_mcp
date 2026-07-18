@@ -33,14 +33,16 @@
 
 ## 快速开始
 
+**要求：** Python ≥ 3.10（Windows 安装时建议勾选 *Add python.exe to PATH*，或确保安装了 `py` 启动器）。启动脚本（`bin/irmia-devkit.cmd` / `.sh`）首次运行会自动创建项目本地 `.venv` 并把依赖装进去——不会污染全局 site-packages。
+
 ```bash
 git clone https://github.com/irmia2026/irmia_devkit_mcp.git
 cd irmia_devkit_mcp
-pip install mcp
-python server.py
+bin/irmia-devkit.sh        # Linux/macOS
+bin\irmia-devkit.cmd       # Windows —— 或直接运行: python server.py
 ```
 
-首次启动会自动扫描 `vendor/` 和 PATH，生成 `~/.irmia/mcp_config.json`。然后在你的 MCP 客户端中配置：
+首次启动会自动扫描 `vendor/` 和 PATH，生成 `~/.irmia/mcp_config.json`。然后在你的 MCP 客户端中配置（指向启动脚本或 `server.py`）：
 
 ### Cursor — `~/.cursor/mcp.json`
 
@@ -131,7 +133,7 @@ python server.py --http --port 8000
 工具实现从 `irmia_devkit_open` 同步，MCP Server 独立运行，不依赖 AstrBot。
 
 **需要装什么依赖？**
-Python ≥ 3.10 和 `mcp>=1.0.0`。40+ 工具纯标准库实现，可选二进制仅加速无需强制。
+Python ≥ 3.10（Windows 推荐勾选 Add to PATH 或安装 `py` 启动器）。首次经启动脚本运行会自动创建本地 `.venv` 并安装 `mcp>=1.0.0` 等依赖；40+ 工具纯标准库实现，可选二进制仅加速无需强制。
 
 **能部署到服务器上多人共享吗？**
 不能，本 Server 锁定本地部署，所有文件操作作用于运行机器的文件系统。

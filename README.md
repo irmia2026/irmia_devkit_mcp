@@ -37,14 +37,16 @@
 
 ## Quick start
 
+**Requirements:** Python ≥ 3.10 (on Windows, either check *Add python.exe to PATH* during installation or install the `py` launcher). The launcher scripts (`bin/irmia-devkit.cmd` / `.sh`) automatically create a project-local `.venv` on first launch and install dependencies into it — nothing touches your global site-packages.
+
 ```bash
 git clone https://github.com/irmia2026/irmia_devkit_mcp.git
 cd irmia_devkit_mcp
-pip install mcp
-python server.py
+bin/irmia-devkit.sh        # Linux/macOS
+bin\irmia-devkit.cmd       # Windows — or run directly: python server.py
 ```
 
-On first launch the server scans `vendor/` and PATH for `rg` / `fd` / `es` and writes `~/.irmia/mcp_config.json`. Point your MCP client at the server:
+On first launch the server scans `vendor/` and PATH for `rg` / `fd` / `es` and writes `~/.irmia/mcp_config.json`. Point your MCP client at the launcher script (or `server.py`):
 
 ### Cursor — `~/.cursor/mcp.json`
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.1] — 2026-07-18 — Fix stdio startup failure (`read: EOF`)
+
+### Fixed
+
+- **stdio protocol pollution**: all diagnostics (startup banner, missing-tool warnings, launcher messages) now go to stderr; stdout carries JSON-RPC only. Fixes hosts failing with `read: EOF` on startup.
+- **Launcher Python detection**: `bin/irmia-devkit.cmd` now detects the Windows `py` launcher (in addition to `python`/`python3`) and verifies Python >= 3.10.
+- **Dependency isolation**: both launchers create/use a project-local `.venv` instead of installing into global site-packages, so multi-Python machines no longer install into the wrong interpreter.
+
 ## [2.7.0] — 2026-07-17 — Tool consolidation + bundled binaries
 
 ### Added
