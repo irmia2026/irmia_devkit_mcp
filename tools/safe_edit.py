@@ -62,7 +62,12 @@ def _restore_line_endings(s: str, has_crlf: bool) -> str:
 
 
 def edit(
-    filepath: str, old: str, new: str, replace_all: bool = False, occurrence: int = 0
+    filepath: str,
+    old: str,
+    new: str,
+    replace_all: bool = False,
+    occurrence: int = 0,
+    preserve_inner_indent: bool = True,
 ) -> dict:
     """
     安全编辑文件：自动备份→替换→语法检查→通过保留/失败回滚。
@@ -75,6 +80,8 @@ def edit(
         new: 新文本
         replace_all: 是否替换所有匹配
         occurrence: 替换第 N 次出现（0=默认行为，首次出现。多匹配时可用此参数消歧）
+        preserve_inner_indent: 缩进对齐时保留嵌套函数的内部缩进（默认 True，自动开启）。
+            当 new 中包含嵌套 def/class 等多层缩进结构时自动保留。设为 False 可手动关闭。
 
     Returns:
         {"ok": true, "backup": "...", "syntax_ok": true}
@@ -141,7 +148,7 @@ def edit(
 
     if old_count == 0:
         # P0-1: whitespace-tolerant fallback before giving up
-        aligned = align_whitespace(content, old, new)
+        aligned = align_whitespace(content, old, new, preserve_inner_indent)
         if aligned:
             old, new = aligned
             old_count = content.count(old)
@@ -223,13 +230,15 @@ def edit(
         if has_crlf:
             new_content = _restore_line_endings(new_content, has_crlf)
         try:
-            atomic_write_text(filepath, new_content, encoding)
+            # 统一用 UTF-8 写入，与 file_patch.patch 路径一致：
+            # 避免 GBK 等旧编码文件写入含 emoji 等 new 文本时 UnicodeEncodeError。
+            atomic_write_text(filepath, new_content, "utf-8")
         except (OSError, UnicodeError) as e:
             return {"ok": False, "error": f"无法写入文件：{e}"}
         result["replaced"] = 1
         result["occurrence"] = occurrence
     else:
-        patch_result = patch(filepath, old, new, replace_all)
+        patch_result = patch(filepath, old, new, replace_all, preserve_inner_indent)
         if not patch_result.get("ok"):
             return {
                 **result,
@@ -344,7 +353,21 @@ def rollback(filepath: str, backup_name: str | None = None) -> dict:
         backup_path = candidates[0]
 
     try:
+        # 回滚前先把当前状态备份一次，使回滚可撤销（防止回滚错无法恢复）。
+        cur_ts = datetime.now().strftime("%Y%m%d%H%M%S")
+        pre_rollback_backup = backup_root / f"{backup_name_stem(p)}.{cur_ts}.prerollback.bak"
+        shutil.copy2(filepath, str(pre_rollback_backup))
+    except (OSError, UnicodeError) as e:
+        return {"ok": False, "error": f"回滚前备份当前状态失败: {e}", "proposal": "请先确认目标文件可写"}
+
+    try:
         shutil.copy2(str(backup_path), filepath)
     except (OSError, UnicodeError) as e:
         return {"ok": False, "error": f"回滚失败: {e}", "proposal": f"备份在 {backup_path}，请手动复制恢复"}
-    return {"ok": True, "file": filepath, "restored_from": str(backup_path)}
+    return {
+        "ok": True,
+        "file": filepath,
+        "restored_from": str(backup_path),
+        "current_state_backup": str(pre_rollback_backup),
+        "note": "回滚前的当前状态已备份，可再次 rollback 撤销本次回滚",
+    }
