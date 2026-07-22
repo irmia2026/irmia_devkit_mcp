@@ -15,7 +15,32 @@ _FORBIDDEN_PREFIXES = [
     "C:/Program Files", "C:/Program Files (x86)",
     "C:/Users/All Users",
     "/bin", "/boot", "/dev", "/etc", "/lib", "/proc", "/root", "/sbin", "/sys", "/usr", "/var",
+    # macOS system roots. /etc and /var resolve through /private, so both the
+    # public aliases and their canonical targets must remain protected.
+    "/Applications", "/Library", "/System", "/private/etc", "/private/var",
 ]
+
+
+def _forbidden_prefix(path: str | Path) -> str | None:
+    """Return the protected root containing path, including resolved aliases."""
+    resolved = Path(path).resolve()
+    path_norm = str(resolved).replace("\\", "/").casefold()
+    # macOS places each user's temporary files below /private/var/folders.
+    # Treating the whole canonical /var tree as forbidden would make normal
+    # editor and test temp files unusable, while /var/log and peers stay blocked.
+    macos_temp_root = "/private/var/folders"
+    if path_norm == macos_temp_root or path_norm.startswith(macos_temp_root + "/"):
+        return None
+    for forbidden in _FORBIDDEN_PREFIXES:
+        roots = {forbidden.replace("\\", "/")}
+        candidate = Path(forbidden)
+        if candidate.is_absolute():
+            roots.add(str(candidate.resolve()).replace("\\", "/"))
+        for root in roots:
+            root_norm = root.rstrip("/").casefold()
+            if path_norm == root_norm or path_norm.startswith(root_norm + "/"):
+                return forbidden
+    return None
 
 
 
@@ -36,12 +61,11 @@ def remove(path: str, confirm: bool = False, max_items: int = 50) -> dict:
     if not p.exists():
         return {"ok": False, "error": f"路径不存在: {path}"}
 
-    path_str = str(p).replace("\\", "/")
-    for forbidden in _FORBIDDEN_PREFIXES:
-        if path_str.lower().startswith(forbidden.lower() + "/") or path_str.lower() == forbidden.lower():
-            return {"ok": False, "error": f"禁止操作系统目录: {path}",
-                    "proposal": "路径位于受保护的系统目录中，删除操作已被拦截。",
-                    "evidence": {"path": path, "blocked_by": forbidden}}
+    forbidden = _forbidden_prefix(p)
+    if forbidden:
+        return {"ok": False, "error": f"禁止操作系统目录: {path}",
+                "proposal": "路径位于受保护的系统目录中，删除操作已被拦截。",
+                "evidence": {"path": path, "blocked_by": forbidden}}
 
     if p.is_file():
         try:
@@ -114,12 +138,11 @@ def _check_path(path: str) -> dict | None:
     if any(part == ".." for part in raw.replace("\\", "/").split("/")):
         return {"ok": False, "error": "路径包含 .. 穿越，已被拒绝"}
     p = Path(path).resolve()
-    path_str = str(p).replace("\\", "/")
-    for forbidden in _FORBIDDEN_PREFIXES:
-        if path_str.lower().startswith(forbidden.lower() + "/") or path_str.lower() == forbidden.lower():
-            return {"ok": False, "error": f"禁止操作系统目录: {p}",
-                    "proposal": "路径位于受保护的系统目录中，操作已被拦截。",
-                    "evidence": {"path": str(p), "blocked_by": forbidden}}
+    forbidden = _forbidden_prefix(p)
+    if forbidden:
+        return {"ok": False, "error": f"禁止操作系统目录: {p}",
+                "proposal": "路径位于受保护的系统目录中，操作已被拦截。",
+                "evidence": {"path": str(p), "blocked_by": forbidden}}
     return None
 
 

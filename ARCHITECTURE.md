@@ -7,10 +7,10 @@ This document describes the internal design of `irmia_devkit_mcp`: project layou
 ```
 irmia_devkit_mcp/
 ├── server.py                # MCP entry point: 44 tool registrations, FastMCP startup
-├── __main__.py              # `python -m irmia_devkit_mcp`
+├── __main__.py              # Source-tree module wrapper; wheel CLI targets server:main
 ├── pyproject.toml           # Python package metadata (setuptools)
 ├── package.json             # npm-side metadata for MCP client registries
-├── bin/                     # Launcher scripts (irmia-devkit.cmd / irmia-devkit.sh)
+├── bin/                     # Polyglot manifest launcher (.cmd) + POSIX helper (.sh)
 ├── tools/                   # Tool implementations (synced from irmia_devkit_open)
 │   ├── safe_edit.py         # backup → replace → syntax check → rollback
 │   ├── safe_read.py         # enhanced file reading (encoding / hex / skeleton)
@@ -21,7 +21,7 @@ irmia_devkit_mcp/
 │   ├── _http_utils.py       # SSRF validation shared by http_get / http_download
 │   ├── _file_utils.py       # shared file utilities
 │   └── ... (49 modules)
-├── vendor/                  # Optional bundled binaries (rg / fd / es, per-platform)
+├── vendor/                  # Optional user-supplied binaries (none shipped)
 ├── tests/                   # 38 pytest files, one per tool module
 ├── README.md                # User documentation
 ├── CHANGELOG.md             # Version history (Keep a Changelog)
@@ -36,7 +36,7 @@ MCP client (Claude Code / Cursor / Windsurf / ...)
     │  JSON-RPC over stdio │ SSE on localhost
     ▼
 server.py ── FastMCP host
-    │  @mcp.tool() registration
+    │  @mcp.tool(annotations=...) registration
     ▼
 tools/*.py ── pure-function implementations
     │  dict result → _json() → JSON string → MCP response
@@ -44,7 +44,7 @@ tools/*.py ── pure-function implementations
 MCP client ── LLM consumes structured result
 ```
 
-Tool implementations are pure functions returning plain dicts. `server.py` is a thin registration layer: it imports the functions, wraps them with `@mcp.tool()`, and serializes results. No business logic lives in the server layer.
+Tool implementations are pure functions returning plain dicts. `server.py` is a thin registration layer: it imports the functions, wraps them with annotated `@mcp.tool(...)` registrations, and serializes results. No business logic lives in the server layer.
 
 ## Design decisions
 
@@ -60,11 +60,11 @@ Tool implementations are pure functions returning plain dicts. `server.py` is a 
 
 **Rationale.** Every filesystem tool operates on the machine running the server. Binding to a routable address would expose arbitrary host paths and file contents to the network. This is enforced in code, not configuration, so it cannot be disabled by mistake.
 
-### ADR-3 — Vendor-first binary resolution
+### ADR-3 — User-controlled binary resolution
 
 **Decision.** External executables (`rg`, `fd`, `es`) are resolved in this order: project `vendor/` → PATH → well-known install locations. On Windows `.exe` is preferred; on POSIX systems the extensionless binary is preferred and non-executable candidates are skipped.
 
-**Rationale.** Shipping known-good binaries in `vendor/` makes the server work offline and produces reproducible behavior across machines. PATH fallback keeps the server usable in a stock environment; the pure-Python fallbacks in `rg_search` / `es_search` keep it functional with no external tools at all.
+**Rationale.** The package does not ship opaque third-party executables. Users retain control of binary provenance by installing official releases on PATH or placing a verified platform build in `vendor/`. Pure-Python fallbacks in `rg_search` / `es_search` keep the server functional with no external tools at all.
 
 ### ADR-4 — Proposal protocol for recoverable failures
 
@@ -99,7 +99,7 @@ Startup sequence:
 ## Tool registration pattern
 
 ```python
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def safe_edit(filepath: str, old: str, new: str, ...) -> str:
     """Docstring → surfaced to the MCP client as the tool description.
 
@@ -116,6 +116,7 @@ Rules every registration follows:
 
 - Return `str` (JSON via `_json()`), never raise.
 - The implementing function lives in `tools/` and returns a plain dict.
+- Every tool declares read-only, destructive, idempotent, and open-world hints.
 - Side effects beyond the primary purpose (e.g. index refresh) are best-effort and must not affect the result.
 
 ## Dependencies
@@ -123,12 +124,10 @@ Rules every registration follows:
 | Required | Optional |
 |----------|----------|
 | Python ≥ 3.10 | chardet — better encoding detection in `safe_read` |
-| `mcp>=1.0.0` | psutil — process listing in `proc_list` |
-| | tree-sitter — multi-language indexing in `code_index` |
+| Exact versions in `requirements.txt` (`mcp`, Beautiful Soup, lxml, PyYAML, psutil) | tree-sitter — multi-language indexing in `code_index` |
 | | ripgrep / fd / Everything CLI — accelerated search |
-| | beautifulsoup4 — HTML table extraction in `html_extract` |
 
-40+ tools run on the standard library alone. Optional dependencies degrade gracefully; nothing fails hard when they are missing.
+Optional external executables degrade gracefully and are not included in release artifacts.
 
 ## Testing
 

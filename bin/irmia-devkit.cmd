@@ -1,3 +1,9 @@
+#!/bin/sh
+# 2>NUL & @goto windows
+exec "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/irmia-devkit.sh" "$@"
+exit $?
+
+:windows
 @echo off
 setlocal enabledelayedexpansion
 
@@ -30,11 +36,12 @@ if not exist "%VENV_PY%" (
     )
 )
 
-rem -- install deps into venv; pip output to stderr, stdout stays JSON-RPC only --
-"%VENV_PY%" -c "import mcp,bs4,lxml" >nul 2>nul
+rem -- install pinned deps into venv; pip output to stderr, stdout stays JSON-RPC only --
+set "REQ=%~dp0..\requirements.txt"
+"%VENV_PY%" -c "import mcp,bs4,lxml,yaml,psutil;from importlib.metadata import version;e={'mcp':'1.27.0','beautifulsoup4':'4.15.0','lxml':'6.1.1','PyYAML':'6.0.3','psutil':'7.2.2'};raise SystemExit(0 if all(version(k)==v for k,v in e.items()) else 1)" >nul 2>nul
 if errorlevel 1 (
     >&2 echo [irmia-devkit] Installing dependencies into local venv...
-    "%VENV_PY%" -m pip install "mcp>=1.0.0" beautifulsoup4 lxml -q >&2
+    "%VENV_PY%" -m pip install --requirement "%REQ%" -q >&2
     if errorlevel 1 (
         >&2 echo [irmia-devkit] Error: dependency install failed. Check network/pip.
         exit /b 1

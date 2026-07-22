@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.2] — 2026-07-22 — Marketplace and MCP safety hardening
+
+### Fixed
+
+- Block canonical macOS system paths such as `/private/etc`, `/private/var`, and `/System`, including the `/etc` and `/var` aliases, across read, move, and remove guards.
+- Make the native plugin entry point executable on POSIX while retaining the Windows launcher.
+- Include the complete `tools` package in Python wheels, repair the installed console entry point, and keep the test suite parseable on Python 3.10.
+- Normalize macOS `/var` and `/private/var` aliases during code-index impact analysis.
+
+### Security
+
+- Add explicit MCP read-only, destructive, idempotent, and open-world annotations to all 44 tools without changing tool names or registration order.
+- Remove the undeclared Skill capability from this MCP-only submission.
+- Remove five opaque precompiled executables from release artifacts; optional search tools are now user-installed and still have pure-Python fallbacks.
+- Pin launcher and package dependencies to exact, tested versions and disclose filesystem, process, subprocess, network, and model-provider data flows.
+
 ## [2.7.1] — 2026-07-18 — Fix stdio startup failure (`read: EOF`)
 
 ### Fixed

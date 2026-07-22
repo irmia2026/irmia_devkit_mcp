@@ -162,6 +162,12 @@ class TestFileMove:
         assert any(kw in r.get("error", "") or kw in r.get("proposal", "")
                    for kw in ("禁止", "系统目录"))
 
+    @pytest.mark.skipif(sys.platform != "darwin", reason="macOS alias regression")
+    def test_macos_resolved_system_prefix_blocked(self):
+        r = move(["/var/log/system.log"], "/tmp")
+        assert r["ok"] is False
+        assert "禁止" in r["error"]
+
     def test_large_batch_hint(self, tmp_path):
         """>1000 个文件且共父目录时返回 hint"""
         src = tmp_path / "src"; dst = tmp_path / "dst"

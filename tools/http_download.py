@@ -68,7 +68,7 @@ def download(url: str, path: str, overwrite: bool = False, timeout: int = 60) ->
 
     start = time.time()
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "IrmiaDevKit/2.3"})
+        req = urllib.request.Request(url, headers={"User-Agent": "IrmiaDevKit/2.7.2"})
         with make_opener().open(req, timeout=timeout) as resp:
             size = int(resp.headers.get("Content-Length", 0))
             if size > _MAX_DOWNLOAD_SIZE:

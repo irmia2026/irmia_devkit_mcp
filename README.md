@@ -5,7 +5,7 @@
 <h1 align="center">Irmia DevKit MCP</h1>
 
 <p align="center">
-  <strong>44 safe development tools for AI coding agents — local-only, zero-config, batteries included.</strong><br />
+  <strong>44 permission-annotated development tools for AI coding agents — localhost transport, zero-config setup.</strong><br />
   <sub>Safe editing · Semantic code index · File search · Test runner · System info</sub>
 </p>
 
@@ -28,12 +28,12 @@
 
 | Feature | What it means |
 |---------|---------------|
-| 🔒 **Local-only** | Refuses to bind to anything but `127.0.0.1` / `localhost` / `::1`. Your files never leave the machine. |
-| ⚡ **Zero config** | Bundled `vendor/` binaries (`rg`, `fd`, `es`) are picked up automatically; falls back to PATH, then to pure-Python implementations. |
+| 🔒 **Local transport** | Refuses non-loopback HTTP binds. MCP clients may still send tool inputs and outputs to their configured model provider. |
+| ⚡ **Zero config** | Uses user-installed `rg`, `fd`, or `es` from PATH and falls back to pure-Python implementations. No third-party executable is bundled. |
 | 🛡️ **Defense in depth** | Four-layer SSRF filtering, automatic edit backups with rollback, unified path-traversal checks on every file operation. |
 | 🧠 **Semantic index** | Python AST + SQLite FTS5 — symbol search, call chains, and impact analysis in milliseconds. |
 | 📦 **44 tools** | Editing, search, testing, code intelligence, networking, files, encoding, time, text processing, system info. |
-| 🌍 **Cross-platform** | Windows, Linux, macOS. Platform-aware binary resolution (`*.exe` on Windows, native ELF elsewhere). |
+| 🌍 **Cross-platform** | Windows, Linux, macOS, with platform-native launchers and executable resolution. |
 
 ## Quick start
 
@@ -42,7 +42,7 @@
 ```bash
 git clone https://github.com/irmia2026/irmia_devkit_mcp.git
 cd irmia_devkit_mcp
-bin/irmia-devkit.sh        # Linux/macOS
+bin/irmia-devkit.cmd       # Linux/macOS (the cross-platform manifest entry point)
 bin\irmia-devkit.cmd       # Windows — or run directly: python server.py
 ```
 
@@ -97,7 +97,7 @@ python server.py --http --port 8000
 
 ## External tool resolution
 
-Search order: **project `vendor/` → PATH → well-known install locations**. Linux/macOS binaries must be executable; Windows `.exe` files are preferred on Windows and skipped elsewhere.
+No third-party executable is shipped. Search order is: **user-supplied project `vendor/` → PATH → well-known install locations**. Linux/macOS binaries must be executable; Windows `.exe` files are preferred on Windows and skipped elsewhere. Download optional tools from their official projects and verify them according to your own supply-chain policy.
 
 ```json
 // ~/.irmia/mcp_config.json (auto-generated, user-editable)
@@ -126,6 +126,10 @@ Precedence: environment variable (`IRMIA_ES_PATH`, `IRMIA_RG_PATH`, `IRMIA_FD_PA
 | Paths | `..` traversal rejection + `resolve()` prefix validation + system-directory blocklist |
 | Deployment | Non-localhost binding refused at startup |
 
+### Required capabilities and data flow
+
+This server is intentionally powerful. Depending on the selected tool, it can read, create, overwrite, move, archive, or delete local files; execute test and lint subprocesses; inspect process, port, disk, and system metadata; and make outbound HTTP requests or downloads. The MCP schema marks read-only, mutating, destructive, and open-world tools explicitly so compatible hosts can apply the appropriate approval policy. Tool results are returned to the MCP client and may be transmitted to the model provider configured by that client.
+
 ## Documentation
 
 | Document | Contents |
@@ -141,7 +145,7 @@ Precedence: environment variable (`IRMIA_ES_PATH`, `IRMIA_RG_PATH`, `IRMIA_FD_PA
 `irmia_devkit_mcp` is the MCP-packaged edition. Tool implementations are synced from upstream; the server runs standalone without AstrBot.
 
 **What do I need to install?**
-Python ≥ 3.10 and `mcp>=1.0.0`. 40+ tools are pure standard library; optional binaries accelerate search but are never required.
+Python ≥ 3.10. The launchers install the exact versions in `requirements.txt` into a project-local virtual environment. Optional binaries accelerate search but are never required.
 
 **Can I deploy this on a shared server?**
 No — by design. The server only binds to localhost, and every filesystem tool operates on the machine it runs on. Shared deployment would leak host paths and file contents.

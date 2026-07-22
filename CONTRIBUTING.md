@@ -97,7 +97,7 @@ Rules:
 | ZIP slip | `tools/file_zip.py` | per-entry `resolve()` prefix check against the target directory |
 | SQL injection | `tools/db_query.py` | SELECT/PRAGMA allowlist, read-only mode, parameterized queries |
 | Command injection | `tools/test_runner.py` | allowlisted executables/subcommands, shell-control-character rejection, `shell=False` |
-| Binary hijacking | `tools/auto_config.py` | `vendor/` path derived from `__file__`, never from the working directory |
+| Binary hijacking | `tools/auto_config.py` | no executable is shipped; a user-supplied `vendor/` path is derived from `__file__`, never from the working directory |
 
 When you touch any of these files, extend the corresponding tests rather than weakening a check to make a test pass.
 
@@ -106,7 +106,7 @@ When you touch any of these files, extend the corresponding tests rather than we
 The standard library is the default. Before adding a third-party dependency:
 
 1. Check whether the dependency is optional and degrades gracefully (like `psutil` or `beautifulsoup4`).
-2. If it is required, discuss first — `mcp` is currently the only required dependency.
+2. If it is required, pin the exact version in both `requirements.txt` and `pyproject.toml`.
 3. External executables must be resolvable through `tools/auto_config.py` and must have a pure-Python fallback path.
 
 ## Release checklist
@@ -115,7 +115,9 @@ The standard library is the default. Before adding a third-party dependency:
 - [ ] `python server.py` — starts on stdio, banner shows resolved tools
 - [ ] `python server.py --http` — starts SSE on 127.0.0.1
 - [ ] Tool count in README table matches `@mcp.tool()` registrations in `server.py`
-- [ ] Version bumped consistently in `pyproject.toml` and `package.json`
+- [ ] Version bumped consistently in `pyproject.toml`, `package.json`, and `reasonix-plugin.json`
+- [ ] Real MCP handshake returns 44 tools with explicit safety annotations
+- [ ] npm and wheel contents contain no undeclared executable or cache artifact
 - [ ] `CHANGELOG.md` — `[Unreleased]` section renamed to the new version, fresh `[Unreleased]` added
 - [ ] `python -m pip wheel --no-deps -w dist .` — wheel builds cleanly
 - [ ] Tag: `git tag -a vX.Y.Z -m "vX.Y.Z"` and push with `--tags`

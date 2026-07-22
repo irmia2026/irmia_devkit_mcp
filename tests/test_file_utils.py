@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -220,6 +221,17 @@ class TestCheckPathAllowed:
             result = fu.check_path_allowed("/etc/passwd")
             assert result is not None
             assert result["ok"] is False
+
+    @pytest.mark.skipif(sys.platform != "darwin", reason="macOS alias regression")
+    @pytest.mark.parametrize("path", ["/etc/passwd", "/var/log/system.log", "/System/Library"])
+    def test_forbidden_macos_resolved_aliases(self, path):
+        result = fu.check_path_allowed(path)
+        assert result is not None
+        assert result["ok"] is False
+
+    @pytest.mark.skipif(sys.platform != "darwin", reason="macOS temp layout")
+    def test_macos_per_user_temp_is_allowed(self, tmp_path):
+        assert fu.check_path_allowed(tmp_path / "safe.txt") is None
 
 
 class TestIsBinaryFile:

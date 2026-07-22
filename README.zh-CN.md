@@ -5,7 +5,7 @@
 <h1 align="center">Irmia DevKit MCP</h1>
 
 <p align="center">
-  <strong>为 AI 编码 Agent 提供 44 个安全开发工具 — 纯本地 · 零配置 · 开箱即用</strong><br />
+  <strong>为 AI 编码 Agent 提供 44 个带权限注解的开发工具 — 本地传输 · 零配置</strong><br />
   <sub>安全编辑 · 语义索引 · 文件搜索 · 测试运行 · 系统信息</sub>
 </p>
 
@@ -24,12 +24,12 @@
 
 | 特性 | 说明 |
 |------|------|
-| 🔒 **纯本地** | 仅绑定 `127.0.0.1` / `localhost` / `::1`，数据不出本机 |
-| ⚡ **零配置** | 项目内置 `vendor/` 目录放入 `rg` / `fd` / `es` 即可自动识别，也支持系统 PATH 和纯 Python 降级 |
+| 🔒 **本地传输** | HTTP 仅允许绑定 `127.0.0.1` / `localhost` / `::1`；MCP 客户端仍可能把工具输入与结果发送给其配置的模型服务商 |
+| ⚡ **零配置** | 自动使用 PATH 中由用户安装的 `rg` / `fd` / `es`，缺失时纯 Python 降级；包内不携带第三方可执行文件 |
 | 🛡️ **多层防御** | 四层 SSRF 过滤、编辑自动备份回滚、全文件操作统一路径穿越检查 |
 | 🧠 **语义索引** | Python AST + SQLite FTS5，毫秒级符号搜索、调用链追踪、变更影响分析 |
 | 📦 **44 工具** | 安全编辑、文件系统、搜索、代码智能、网络、文本处理、系统信息、测试运行 |
-| 🌍 **跨平台** | Windows / Linux / macOS，自动选择对应平台二进制 |
+| 🌍 **跨平台** | Windows / Linux / macOS，使用平台启动脚本并自动解析可执行文件 |
 
 ## 快速开始
 
@@ -38,7 +38,7 @@
 ```bash
 git clone https://github.com/irmia2026/irmia_devkit_mcp.git
 cd irmia_devkit_mcp
-bin/irmia-devkit.sh        # Linux/macOS
+bin/irmia-devkit.cmd       # Linux/macOS（跨平台清单入口）
 bin\irmia-devkit.cmd       # Windows —— 或直接运行: python server.py
 ```
 
@@ -93,7 +93,7 @@ python server.py --http --port 8000
 
 ## 外部工具与 vendor 目录
 
-搜索顺序：**项目 `vendor/` → 系统 PATH → 常见安装路径**。各平台自动选择对应格式的二进制（Windows 用 `.exe`，POSIX 用无后缀 ELF），找不到时使用纯 Python 降级。
+包内不附带第三方可执行文件。搜索顺序：**用户自行放入的项目 `vendor/` → 系统 PATH → 常见安装路径**。各平台自动选择对应格式的二进制，找不到时使用纯 Python 降级。请从对应官方项目下载可选工具，并按自己的供应链策略完成校验。
 
 ```json
 // ~/.irmia/mcp_config.json（自动生成，可手动编辑）
@@ -117,6 +117,10 @@ python server.py --http --port 8000
 | 路径 | `..` 穿越拒绝 + `resolve()` 前缀验证 + 系统目录黑名单 |
 | 部署 | 拒绝非本地绑定 |
 
+### 所需权限与数据流
+
+本 Server 按所选工具可读取、新建、覆盖、移动、压缩或删除本机文件，执行测试和 lint 子进程，读取进程、端口、磁盘与系统元数据，以及发起对外 HTTP 请求或下载。MCP schema 已明确标注只读、写入、破坏性和外部交互工具，供兼容客户端执行相应审批。工具结果会返回 MCP 客户端，并可能被该客户端发送给其配置的模型服务商。
+
 ## 文档
 
 | 文档 | 内容 |
@@ -133,10 +137,10 @@ python server.py --http --port 8000
 工具实现从 `irmia_devkit_open` 同步，MCP Server 独立运行，不依赖 AstrBot。
 
 **需要装什么依赖？**
-Python ≥ 3.10（Windows 推荐勾选 Add to PATH 或安装 `py` 启动器）。首次经启动脚本运行会自动创建本地 `.venv` 并安装 `mcp>=1.0.0` 等依赖；40+ 工具纯标准库实现，可选二进制仅加速无需强制。
+Python ≥ 3.10（Windows 推荐勾选 Add to PATH 或安装 `py` 启动器）。首次经启动脚本运行会自动创建本地 `.venv`，并按 `requirements.txt` 的精确版本安装依赖；可选二进制仅用于加速，并非必需。
 
 **能部署到服务器上多人共享吗？**
-不能，本 Server 锁定本地部署，所有文件操作作用于运行机器的文件系统。
+不能，本 Server 锁定本地传输，所有文件操作作用于运行机器的文件系统；这不等于模型侧离线，请同时检查 MCP 客户端所配置模型服务商的数据策略。
 
 ## License
 

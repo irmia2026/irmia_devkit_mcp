@@ -1,3 +1,6 @@
-beautifulsoup4>=4.12
-lxml>=5.0
+mcp==1.27.0
+beautifulsoup4==4.15.0
+lxml==6.1.1
+PyYAML==6.0.3
+psutil==7.2.2
 # optional: tree-sitter tree-sitter-javascript tree-sitter-typescript tree-sitter-go tree-sitter-rust tree-sitter-java tree-sitter-c tree-sitter-cpp

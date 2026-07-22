@@ -11,8 +11,7 @@ _config: dict = {}
 def set_config(cfg: dict, plugin_dir: str = "") -> None:
     global _config, _plugin_dir
     _config = cfg
-    if plugin_dir:
-        _plugin_dir = Path(plugin_dir)
+    _plugin_dir = Path(plugin_dir) if plugin_dir else None
     # 保证默认值
     try:
         default_backup_dir = str(Path.home() / ".irmia" / "backups")
