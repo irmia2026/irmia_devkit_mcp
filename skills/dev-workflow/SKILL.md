@@ -1,8 +1,8 @@
 ---
 name: dev-workflow
 description: >
-  收到编码任务时强制走安全工作流。触发：写代码、改代码、修bug、重构、实现功能、修改文件。
-  核心原则：先确认后执行、自动备份回滚、语法门禁。Git 操作由宿主 Agent 负责。
+  使用 irmia-devkit MCP 处理写代码、改代码、修 bug、重构、实现功能或修改文件任务时，
+  提供带自动备份回滚和语法门禁的安全开发工作流。Git 操作仍由宿主 Agent 负责。
   可用工具：safe_edit、safe_read、safe_write、safe_backups、safe_rollback、multi_edit、
   file_patch、file_remove、file_move、syntax_check、lint_runner、test_runner、
   es_search、rg_search、dir_tree、dir_list、file_diff、file_hash、
@@ -39,9 +39,9 @@ description: >
 
 不需要路由表，不需要流水线引擎。用判断力。
 
-## safe_edit 铁律
+## safe_edit 使用建议
 
-- 改代码**必须**用 `safe_edit`，禁止 `file_write` 或裸 `file_patch`
+- 修改已有代码时优先用 `safe_edit`；若宿主策略要求其他编辑工具，以宿主策略为准
 - `safe_edit` 自动跑 `syntax_check`，语法错就分析根因重新改
 - 语法失败自动回滚，不要手动恢复
 - 回滚后工具返回 `proposal` 和 `options`——直接看提案，选一个选项，重试
@@ -50,9 +50,9 @@ description: >
 - 跨文件批量改 → `multi_edit`（原子提交，任一失败全体回滚）
 - 新建文件 → `safe_write`（自动创建目录，语法失败不阻塞）
 
-## safe_read 铁律
+## safe_read 使用建议
 
-- 读代码文件**必须**用 `safe_read`，不要用任何其他阅读工具
+- 需要编码检测、分页、骨架或二进制预览时优先用 `safe_read`
 - 大文件分页：`head=100` 或 `tail=100`
 - 二进制文件自动切换 hex 模式，不抛异常
 - 编码自动检测（utf-8/gbk/latin-1），不用手动指定
@@ -83,7 +83,7 @@ code_index（一次性建索引）
 | explore 查不到，怀疑索引坏了 | `code_status` |
 | 索引正常但 explore 查不到 | fallback → `rg_search` |
 
-### 铁律
+### 建议
 
 1. **图优先** — 能 code_explore 就不要 rg_search
 2. **建索引一次性** — 进项目 `code_index`，后续增量，不要每查一次重建

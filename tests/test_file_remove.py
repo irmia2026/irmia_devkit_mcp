@@ -17,10 +17,33 @@ class TestFileRemove:
     def test_remove_file(self, tmp_path):
         f = tmp_path / "a.txt"
         f.write_text("x", encoding="utf-8")
-        r = remove(str(f))
+        r = remove(str(f), confirm=True)
         assert r["ok"] is True
         assert r["deleted"] == 1
         assert not f.exists()
+
+    def test_file_requires_confirm(self, tmp_path):
+        f = tmp_path / "a.txt"
+        f.write_text("x", encoding="utf-8")
+        r = remove(str(f))
+        assert r["ok"] is False
+        assert f.exists()
+
+    def test_symlink_removal_keeps_target(self, tmp_path):
+        target = tmp_path / "target.txt"
+        target.write_text("keep", encoding="utf-8")
+        link = tmp_path / "link.txt"
+        link.symlink_to(target)
+        r = remove(str(link), confirm=True)
+        assert r["ok"] is True
+        assert not link.exists()
+        assert target.read_text(encoding="utf-8") == "keep"
+
+    def test_blocks_filesystem_and_home_roots(self):
+        from tools.file_remove import _check_path
+
+        assert _check_path(Path.cwd().anchor)["ok"] is False
+        assert _check_path(str(Path.home()))["ok"] is False
 
     def test_remove_file_not_found(self):
         r = remove("/nonexistent/path/xyz.txt")
@@ -42,6 +65,17 @@ class TestFileRemove:
         assert r["ok"] is True
         assert r["deleted"] >= 1
         assert not d.exists()
+
+    def test_directory_hard_limit_has_no_unusable_confirmation(self, tmp_path):
+        d = tmp_path / "large"
+        d.mkdir()
+        (d / "a.txt").write_text("a", encoding="utf-8")
+        (d / "b.txt").write_text("b", encoding="utf-8")
+        r = remove(str(d), confirm=True, max_items=1)
+        assert r["ok"] is False
+        assert "硬上限" in r["proposal"]
+        assert "confirm_batch_delete" not in r["options"]
+        assert d.exists()
 
     def test_blocks_dotdot_traversal(self):
         r = remove("../etc/passwd")
@@ -79,6 +113,20 @@ class TestFileMove:
         for i in range(5):
             assert (dst / f"f{i}.txt").read_text(encoding="utf-8") == str(i)
             assert not (src / f"f{i}.txt").exists()
+
+    def test_move_symlink_keeps_target_in_place(self, tmp_path):
+        src = tmp_path / "src"; dst = tmp_path / "dst"
+        src.mkdir(); dst.mkdir()
+        target = src / "target.txt"
+        target.write_text("keep", encoding="utf-8")
+        link = src / "link.txt"
+        link.symlink_to(target)
+        r = move([str(link)], str(dst))
+        assert r["ok"] is True
+        assert r["moved"] == 1
+        assert not link.exists()
+        assert (dst / "link.txt").is_symlink()
+        assert target.read_text(encoding="utf-8") == "keep"
 
     def test_directory(self, tmp_path):
         src = tmp_path / "src"; dst = tmp_path / "dst"
@@ -161,6 +209,12 @@ class TestFileMove:
         assert r["ok"] is False
         assert any(kw in r.get("error", "") or kw in r.get("proposal", "")
                    for kw in ("禁止", "系统目录"))
+
+    @pytest.mark.skipif(sys.platform != "darwin", reason="macOS alias regression")
+    def test_macos_resolved_system_prefix_blocked(self):
+        r = move(["/var/log/system.log"], "/tmp")
+        assert r["ok"] is False
+        assert "禁止" in r["error"]
 
     def test_large_batch_hint(self, tmp_path):
         """>1000 个文件且共父目录时返回 hint"""

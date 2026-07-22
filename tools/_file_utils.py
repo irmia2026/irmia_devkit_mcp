@@ -205,18 +205,16 @@ def _check_path_safety(path: str | Path, *, read: bool = True) -> dict | None:
         return {"ok": False, "error": "路径包含 .. 穿越，已被拒绝"}
 
     p = Path(path).resolve()
-    path_str = str(p).replace("\\", "/")
-    from .file_remove import _FORBIDDEN_PREFIXES
+    from .file_remove import _forbidden_prefix
 
-    for forbidden in _FORBIDDEN_PREFIXES:
-        forbidden_norm = forbidden.replace("\\", "/")
-        if path_str.lower().startswith(forbidden_norm.lower() + "/") or path_str.lower() == forbidden_norm.lower():
-            return {
-                "ok": False,
-                "error": f"禁止访问系统目录: {p}",
-                "proposal": "路径位于受保护的系统目录中，读取操作已被拦截。",
-                "evidence": {"path": str(p), "blocked_by": forbidden},
-            }
+    forbidden = _forbidden_prefix(p)
+    if forbidden:
+        return {
+            "ok": False,
+            "error": f"禁止访问系统目录: {p}",
+            "proposal": "路径位于受保护的系统目录中，读取操作已被拦截。",
+            "evidence": {"path": str(p), "blocked_by": forbidden},
+        }
     return None
 
 

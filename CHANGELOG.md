@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.2] — 2026-07-22 — Marketplace and MCP safety hardening
+
+### Fixed
+
+- Block canonical macOS system paths such as `/private/etc`, `/private/var`, and `/System`, including the `/etc` and `/var` aliases, across read, move, and remove guards.
+- Block filesystem roots and the user-home root, require confirmation for file/link deletion, and unlink symlinks without following their targets.
+- Download into a same-directory temporary file and atomically replace the destination so failed overwrites preserve existing data.
+- Make the native plugin entry point executable on POSIX, centralize venv setup in a standard-library Python bootstrap, and use a Node launcher for reliable npm execution on Windows.
+- Include the complete `tools` package in Python wheels, repair the installed console entry point, and keep the test suite parseable on Python 3.10.
+- Normalize macOS `/var` and `/private/var` aliases during code-index impact analysis.
+- Use the advertised Streamable HTTP transport instead of the deprecated SSE path.
+
+### Security
+
+- Add explicit MCP read-only, destructive, idempotent, and open-world annotations to all 44 tools without changing tool names or registration order.
+- Publish the declared `dev-workflow` Skill and MCP server together as a Reasonix plugin, now that plugin submissions are supported.
+- Preserve the five bundled search executables, document their upstream assets and licenses, and enforce SHA-256 checksums in packaging tests; replace `rg.exe` with the byte-identical official release build.
+- Pin validated public DNS answers to the actual HTTP connection and disable ambient proxies to close DNS-rebinding TOCTOU gaps.
+- Pin launcher and package dependencies to exact, tested versions and disclose filesystem, process, subprocess, network, and model-provider data flows.
+
 ## [2.7.1] — 2026-07-18 — Fix stdio startup failure (`read: EOF`)
 
 ### Fixed
@@ -19,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Bundled binaries (`vendor/`)**: `rg.exe` / `fd.exe` / `es.exe` (Windows) and `rg` / `fd` (Linux/macOS, musl builds) can be placed in `vendor/`; the server resolves them before PATH. Resolution is platform-aware: Windows prefers `.exe`, POSIX prefers the extensionless binary and skips non-executable candidates.
+- **Bundled binaries (`vendor/`)**: `rg.exe` / `fd.exe` / `es.exe` (Windows x86-64) and `rg` / `fd` (Linux x86-64 musl) can be placed in `vendor/`; the server resolves them after explicit configuration and before PATH. macOS, ARM, and other unsupported targets skip these files.
 - **`fd_path` configuration**: `fd` is now a first-class entry in `~/.irmia/mcp_config.json`, alongside `es_path` and `rg_path`, with environment override via `IRMIA_FD_PATH`.
 
 ### Removed

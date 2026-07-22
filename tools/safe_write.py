@@ -26,7 +26,7 @@ from pathlib import Path
 from .syntax_check import check as syntax_check
 from ._file_utils import read_file_with_encoding, human_size, SAFE_EDIT_MAX_SIZE, atomic_write_text, _first_existing_parent, backup_name_stem
 from .safe_edit import _backup_dir
-from .file_remove import _FORBIDDEN_PREFIXES
+from .file_remove import _forbidden_prefix
 
 
 _PREVIEW_LINES = 8
@@ -49,16 +49,14 @@ def _check_forbidden(p: Path, raw: str) -> dict | None:
     if ".." in raw.replace("\\", "/").split("/"):
         return {"ok": False, "error": "路径包含 .. 穿越，已被拒绝"}
 
-    path_str = str(p).replace("\\", "/")
-    for forbidden in _FORBIDDEN_PREFIXES:
-        forbidden_norm = forbidden.replace("\\", "/")
-        if path_str.lower().startswith(forbidden_norm.lower() + "/") or path_str.lower() == forbidden_norm.lower():
-            return {
-                "ok": False,
-                "error": f"禁止写入系统目录: {p}",
-                "proposal": "路径位于受保护的系统目录中，写入操作已被拦截。",
-                "evidence": {"path": str(p), "blocked_by": forbidden},
-            }
+    forbidden = _forbidden_prefix(p)
+    if forbidden:
+        return {
+            "ok": False,
+            "error": f"禁止写入系统目录: {p}",
+            "proposal": "路径位于受保护的系统目录中，写入操作已被拦截。",
+            "evidence": {"path": str(p), "blocked_by": forbidden},
+        }
     return None
 
 

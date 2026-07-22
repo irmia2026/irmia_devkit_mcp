@@ -1,24 +1,28 @@
 {
   "name": "irmia-devkit-mcp",
-  "version": "2.7.1",
-  "description": "弥亚开发工具箱 MCP — 44 个安全开发工具",
-  "main": "server.py",
+  "version": "2.7.2",
+  "description": "弥亚开发工具箱 MCP — 44 个带权限注解的本地开发工具",
   "bin": {
-    "irmia-devkit": "./bin/irmia-devkit.cmd",
-    "irmia-devkit-mcp": "./bin/irmia-devkit.cmd"
+    "irmia-devkit": "./bin/irmia-devkit.js",
+    "irmia-devkit-mcp": "./bin/irmia-devkit.js"
   },
   "files": [
     "server.py",
     "tools/",
     "bin/",
+    "skills/",
     "vendor/",
+    "reasonix-plugin.json",
     "pyproject.toml",
     "requirements.txt",
-    "__main__.py"
+    "__main__.py",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
   ],
   "scripts": {
-    "start": "python server.py --http --port 8000",
-    "start:stdio": "python server.py"
+    "start": "node ./bin/irmia-devkit.js --http --port 8000",
+    "start:stdio": "node ./bin/irmia-devkit.js"
   },
   "keywords": [
     "mcp",

@@ -365,7 +365,7 @@ class TestFileReadEncoding:
         """超长单行文件应被字节上限截断。"""
         f = Path(tmp_dir) / "longline.txt"
         # 每行 1000 个 'x'，200 行 = 200KB+，超过 MAX_RETURN_BYTES=128KB
-        f.write_text("\n".join(f"line {i}: {"x" * 1000}" for i in range(200)), encoding="utf-8")
+        f.write_text("\n".join(f"line {i}: {'x' * 1000}" for i in range(200)), encoding="utf-8")
         
         result = safe_read.read(str(f), max_lines=200)
         

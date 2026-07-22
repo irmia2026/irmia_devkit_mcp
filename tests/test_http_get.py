@@ -4,6 +4,7 @@ Tests error paths (invalid URLs, private IPs) without real network.
 Use monkeypatch to avoid actual HTTP calls."""
 
 from tools.http_get import get, post
+from tools import _http_utils
 
 
 class TestHttpGet:
@@ -51,3 +52,30 @@ class TestHttpPost:
         r = post("http://example.com/api", data={"key": "value"})
         # Should return ok: False (either validation or network error)
         assert r["ok"] is False
+
+
+class TestPinnedDns:
+    def test_dns_failure_is_rejected(self, monkeypatch):
+        import socket
+
+        def fail(*_args, **_kwargs):
+            raise socket.gaierror("missing")
+
+        monkeypatch.setattr(_http_utils.socket, "getaddrinfo", fail)
+        err = _http_utils.validate_url("https://missing.example/path")
+        assert err is not None
+        assert "解析失败" in err["error"]
+
+    def test_connection_uses_the_validated_ip(self, monkeypatch):
+        answers = [(2, 1, 6, "", ("93.184.216.34", 0))]
+        connected = []
+
+        monkeypatch.setattr(_http_utils.socket, "getaddrinfo", lambda *_args, **_kwargs: answers)
+        monkeypatch.setattr(
+            _http_utils.socket,
+            "create_connection",
+            lambda address, *_args, **_kwargs: connected.append(address) or object(),
+        )
+        conn = _http_utils.PinnedHTTPConnection("example.com", timeout=1)
+        conn.connect()
+        assert connected == [("93.184.216.34", 80)]

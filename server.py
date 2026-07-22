@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from tools import config as _cfg
 from tools.auto_config import load_config, check_and_warn, print_startup_banner
@@ -76,6 +77,16 @@ mcp = FastMCP(
     "irmia-devkit",
     instructions="弥亚开发工具箱 MCP — 安全代码编辑、搜索、测试、代码智能、网络、文件、编码、时间、文本处理、系统信息。为仅有 shell 的 bare agent 提供全面且安全的开发工具集。",
 )
+# FastMCP 1.27 does not expose its underlying Server version parameter.
+mcp._mcp_server.version = "2.7.2"
+
+# These hints are part of the public MCP schema. Hosts can use them to keep
+# inspection available in read-only modes and gate mutations appropriately.
+READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+READ_ONLY_OPEN = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
+WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False)
+DESTRUCTIVE_OPEN = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True)
 
 
 def _json(result: dict) -> str:
@@ -88,7 +99,7 @@ def _json(result: dict) -> str:
 # 🔒 安全编辑链 (10)
 # ═══════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def safe_edit(filepath: str, old: str, new: str, replace_all: bool = False, occurrence: int = 0) -> str:
     """安全编辑文件：自动备份→替换→语法检查→通过保留/失败回滚。
     修改任何代码文件必须使用此工具，内置 whitespace 容错对齐。多处匹配时返回所有位置供消歧。
@@ -106,7 +117,7 @@ def safe_edit(filepath: str, old: str, new: str, replace_all: bool = False, occu
     return _json(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def safe_backups(filepath: str = "") -> str:
     """列出某个文件的所有备份。不传 filepath 列出全部备份。
 
@@ -116,7 +127,7 @@ def safe_backups(filepath: str = "") -> str:
     return _json(_safe_backups(filepath or None))
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def safe_rollback(filepath: str, backup_name: str = "") -> str:
     """回滚文件到指定备份。不传 backup_name 回滚到最近一次备份。
 
@@ -127,7 +138,7 @@ def safe_rollback(filepath: str, backup_name: str = "") -> str:
     return _json(_safe_rollback(filepath, backup_name or None))
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def safe_write(filepath: str, content: str, overwrite: bool = False) -> str:
     """新建文件或整体覆盖（safe_edit 的姊妹工具）。新建首选，自动创建父目录。
 
@@ -143,7 +154,7 @@ def safe_write(filepath: str, content: str, overwrite: bool = False) -> str:
     return _json(_safe_write(filepath, content, overwrite=overwrite))
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def file_patch(filepath: str, old: str, new: str, replace_all: bool = False) -> str:
     """精确文本替换（非代码文件用）。自带 whitespace 对齐容错。
 
@@ -156,7 +167,7 @@ def file_patch(filepath: str, old: str, new: str, replace_all: bool = False) -> 
     return _json(_file_patch(filepath, old, new, replace_all=replace_all))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def file_preview(filepath: str, old: str, new: str, replace_all: bool = False) -> str:
     """预览 file_patch 的替换效果（dry-run diff），不实际修改文件。
 
@@ -169,7 +180,7 @@ def file_preview(filepath: str, old: str, new: str, replace_all: bool = False) -
     return _json(_file_preview(filepath, old, new, replace_all=replace_all))
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def multi_edit(edits: list, syntax_check: bool = True) -> str:
     """跨文件原子编辑：所有编辑在内存中完成，全成功才一次写入磁盘。任一文件写入失败 → 全量回滚所有文件。
 
@@ -180,7 +191,7 @@ def multi_edit(edits: list, syntax_check: bool = True) -> str:
     return _json(_multi_edit(edits, syntax_check=syntax_check))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def syntax_check(filepath: str) -> str:
     """检查文件语法。支持 Python / Go / Nim / JavaScript / TypeScript。
 
@@ -190,7 +201,7 @@ def syntax_check(filepath: str) -> str:
     return _json(_syntax_check(filepath))
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 def lint_runner(filepath: str, linter: str = "auto") -> str:
     """运行代码质量检查。自动 fallback: ruff → pylint → eslint。
 
@@ -201,7 +212,7 @@ def lint_runner(filepath: str, linter: str = "auto") -> str:
     return _json(_lint_runner(filepath, linter=linter))
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def test_runner(project_dir: str = ".", test_cmd: str = "", timeout: int = 120, filepath: str = "") -> str:
     """统一测试运行器。自动检测框架并运行。
 
@@ -220,7 +231,7 @@ def test_runner(project_dir: str = ".", test_cmd: str = "", timeout: int = 120, 
 # 🌐 网络 (3)
 # ═══════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_OPEN)
 def http_get(url: str, headers: dict = None, timeout: int = 10) -> str:
     """HTTP GET 请求 (SSRF 四层防护).
 
@@ -238,7 +249,7 @@ def http_get(url: str, headers: dict = None, timeout: int = 10) -> str:
     return _json(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE_OPEN)
 def http_post(url: str, data: str = "", headers: dict = None, timeout: int = 10) -> str:
     """HTTP POST 请求 (SSRF 防护). 多数 MCP 客户端只能 GET.
 
@@ -263,7 +274,7 @@ def http_post(url: str, data: str = "", headers: dict = None, timeout: int = 10)
     return _json(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE_OPEN)
 def http_download(url: str, path: str, overwrite: bool = False, timeout: int = 60) -> str:
     """下载文件到指定路径 (SSRF + 路径沙箱 + 500MB上限).
 
@@ -286,7 +297,7 @@ def http_download(url: str, path: str, overwrite: bool = False, timeout: int = 6
 # 📁 文件系统 (13)
 # ═══════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def safe_read(
     path: str,
     start_line: int = 0,
@@ -327,7 +338,7 @@ def safe_read(
     return _json(_safe_read(**kwargs))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def es_search(query: str, path: str = "", max_results: int = 100, regex: bool = False, case_sensitive: bool = False, whole_word: bool = False, file_type: str = "all", sort_by: str = "", ext: str = "") -> str:
     """毫秒级文件名搜索。Everything (Win) → locate → fd → Python os.walk 四层 fallback，零依赖也能工作。
 
@@ -345,7 +356,7 @@ def es_search(query: str, path: str = "", max_results: int = 100, regex: bool = 
     return _json(_es_search(query=query, path=path or None, max_results=max_results, regex=regex, case_sensitive=case_sensitive, whole_word=whole_word, file_type=file_type, sort_by=sort_by or None, ext=ext or None))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def rg_search(pattern: str, path: str = ".", file_exts: str = "", case_sensitive: bool = False, whole_word: bool = False, list_files: bool = False, context_lines: int = 0, max_results: int = 40) -> str:
     """文件内容搜索（ripgrep 优先，自动 Python fallback）。
 
@@ -362,7 +373,7 @@ def rg_search(pattern: str, path: str = ".", file_exts: str = "", case_sensitive
     return _json(_rg_search(pattern=pattern, path=path, file_exts=file_exts, case_sensitive=case_sensitive, whole_word=whole_word, list_files=list_files, context_lines=context_lines, max_results=max_results))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def dir_tree(path: str = ".", max_depth: int = 3, show_hidden: bool = False, pattern: str = "", max_items: int = 100) -> str:
     """可视化目录树。bare agent 的 ls/find 替代。
 
@@ -376,7 +387,7 @@ def dir_tree(path: str = ".", max_depth: int = 3, show_hidden: bool = False, pat
     return _json(_dir_tree(path=path, max_depth=max_depth, show_hidden=show_hidden, pattern=pattern, max_items=max_items))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def dir_list(path: str = ".", pattern: str = "*", max_depth: int = 1, show_hidden: bool = False) -> str:
     """结构化目录列表，返回 {name, type, size, modified}。
 
@@ -389,7 +400,7 @@ def dir_list(path: str = ".", pattern: str = "*", max_depth: int = 1, show_hidde
     return _json(_dir_list(path=path, pattern=pattern, max_depth=max_depth, show_hidden=show_hidden))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def file_diff(file1: str, file2: str) -> str:
     """两个文件的 unified diff 比较。
 
@@ -403,7 +414,7 @@ def file_diff(file1: str, file2: str) -> str:
     return _json(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def file_hash(filepath: str, algo: str = "sha256") -> str:
     """计算文件哈希 (MD5/SHA1/SHA256). 无终端的 agent 无法用命令行。
 
@@ -414,7 +425,7 @@ def file_hash(filepath: str, algo: str = "sha256") -> str:
     return _json(_file_hash(filepath, algo=algo))
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def file_zip(source: str, output: str = "") -> str:
     """ZIP 压缩。压缩目录或文件到 output zip。
 
@@ -427,7 +438,7 @@ def file_zip(source: str, output: str = "") -> str:
     return _json(_file_zip(files_or_dir=[source], output=output))
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def file_unzip(zip_file: str, output_dir: str = "") -> str:
     """ZIP 解压（Zip-slip 防护）。output_dir 空则解压到 zip 文件所在目录。
 
@@ -440,7 +451,7 @@ def file_unzip(zip_file: str, output_dir: str = "") -> str:
     return _json(_file_unzip(zip_file=zip_file, output_dir=output_dir))
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def file_remove(path: str, confirm: bool = False, max_items: int = 50) -> str:
     """安全删除文件或目录（路径穿越防护 + 系统目录黑名单）。
 
@@ -452,7 +463,7 @@ def file_remove(path: str, confirm: bool = False, max_items: int = 50) -> str:
     return _json(_file_remove(path, confirm=confirm, max_items=max_items))
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def file_move(sources: list, dest: str, overwrite: bool = False) -> str:
     """批量移动文件/目录到目标目录。
     同分区内原子 rename（O(1)），跨分区自动退化为 copy+delete。
@@ -465,13 +476,13 @@ def file_move(sources: list, dest: str, overwrite: bool = False) -> str:
     return _json(_file_move(sources, dest, overwrite=overwrite))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def disk_info() -> str:
     """获取磁盘分区使用情况。"""
     return _json(_disk_info())
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def config_diff(file1: str, file2: str) -> str:
     """配置文件 key 级差异比较 (JSON/YAML)。
 
@@ -513,7 +524,7 @@ def _auto_index(filepath: str) -> None:
         pass  # 索引失败不影响编辑流程
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 def code_index(project_dir: str = ".", incremental: bool = False) -> str:
     """建立项目语义索引。首次进项目调用，后续增量更新。
     支持: Python (ast, 零依赖) / Go/Rust/JS/TS/C/C++/Java (tree-sitter, 可选)
@@ -525,7 +536,7 @@ def code_index(project_dir: str = ".", incremental: bool = False) -> str:
     return _json(_get_codegraph(project_dir).index(project_dir=project_dir, incremental=incremental))
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 def code_explore(query: str, project_dir: str = ".") -> str:
     """探索代码库：查符号定义、调用链、路径追踪。
     查询语法: "X 在哪定义" → 符号搜索, "谁调用了 X" → 调用链, "X → Y" → BFS路径
@@ -537,7 +548,7 @@ def code_explore(query: str, project_dir: str = ".") -> str:
     return _json(_get_codegraph(project_dir).explore(query, project_dir=project_dir))
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 def code_pack(target: str, depth: int = 2, mode: str = "both", project_dir: str = ".") -> str:
     """精准上下文打包：收集符号及其调用链的完整源码。
 
@@ -550,7 +561,7 @@ def code_pack(target: str, depth: int = 2, mode: str = "both", project_dir: str 
     return _json(_get_codegraph(project_dir).code_pack(target, depth=depth, mode=mode))
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 def code_diff_impact(filepaths: list, max_depth: int = 3, project_dir: str = ".") -> str:
     """变更影响分析：分析修改文件会波及哪些调用者。
 
@@ -562,7 +573,7 @@ def code_diff_impact(filepaths: list, max_depth: int = 3, project_dir: str = "."
     return _json(_get_codegraph(project_dir).code_diff_impact(filepaths, max_depth=max_depth))
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 def code_status(project_dir: str = ".") -> str:
     """索引健康检查：覆盖范围、符号数、边数、最后索引时间。explore 查不到时先查这个。
 
@@ -572,7 +583,7 @@ def code_status(project_dir: str = ".") -> str:
     return _json(_get_codegraph(project_dir).code_status())
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 def symbol_rename(old_name: str, new_name: str, project_dir: str = ".", dry_run: bool = True, confirm_multi_file: bool = False) -> str:
     """Python 符号重命名（tokenize 级别，跳过注释和字符串中的同名标识符）。
 
@@ -590,7 +601,7 @@ def symbol_rename(old_name: str, new_name: str, project_dir: str = ".", dry_run:
 # 📊 系统信息 (3)
 # ═══════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_OPEN)
 def port_check(action: str = "check", host: str = "127.0.0.1", port: int = 7860, ports: list = None) -> str:
     """端口检测/扫描。
 
@@ -605,7 +616,7 @@ def port_check(action: str = "check", host: str = "127.0.0.1", port: int = 7860,
     return _json(_port_check(host=host, port=port))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def proc_list(filter_name: str = "") -> str:
     """列出系统进程。可通过 filter_name 按名称模糊过滤。
 
@@ -615,7 +626,7 @@ def proc_list(filter_name: str = "") -> str:
     return _json(_proc_list(filter_name=filter_name or None))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def sys_snapshot() -> str:
     """获取系统快照：CPU/内存/进程/开机时间等。"""
     return _json(_sys_snapshot())
@@ -625,7 +636,7 @@ def sys_snapshot() -> str:
 # 📝 文本处理 (4)
 # ═══════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def html_extract(html: str, what: str = "text", selector: str = "") -> str:
     """HTML → 纯文本/链接/表格。配合 http_get 做 web scraping。
 
@@ -637,7 +648,7 @@ def html_extract(html: str, what: str = "text", selector: str = "") -> str:
     return _json(_html_extract(html=html, what=what, selector=selector))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def json_query(data: str, path: str) -> str:
     """jq 风格 JSON 路径查询。bare agent 没有 jq。
 
@@ -648,7 +659,7 @@ def json_query(data: str, path: str) -> str:
     return _json(_json_query(data=data, path=path))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def text_filter(text: str, action: str = "grep", pattern: str = "", n: int = 10, case_sensitive: bool = False, regex: bool = False) -> str:
     """行过滤：grep/head/tail/count。bare agent 的 grep/head/tail 替代。
 
@@ -663,7 +674,7 @@ def text_filter(text: str, action: str = "grep", pattern: str = "", n: int = 10,
     return _json(_text_filter(text=text, action=action, pattern=pattern, n=n, case_sensitive=case_sensitive, regex=regex))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def diff_strings(a: str, b: str, context_lines: int = 3) -> str:
     """两个字符串的 unified diff。
 
@@ -679,7 +690,7 @@ def diff_strings(a: str, b: str, context_lines: int = 3) -> str:
 # 🔤 编码
 # ═══════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def encode_decode(action: str, format: str = "base64", data: str = "", as_uri: bool = False) -> str:
     """编解码：支持 base64 / url / hex。bare agent 没有这些命令。
 
@@ -708,7 +719,7 @@ def encode_decode(action: str, format: str = "base64", data: str = "", as_uri: b
 # ⏱ 时间
 # ═══════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def time(action: str = "now", value: str = "", ts: int = 0, ms: bool = False, iso1: str = "", iso2: str = "") -> str:
     """时间工具。bare agent 不知道现在几点。
 
@@ -734,7 +745,7 @@ def time(action: str = "now", value: str = "", ts: int = 0, ms: bool = False, is
 # 🧩 扩展 (3)
 # ═══════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def db_query(db_path: str, sql: str, params: list = None) -> str:
     """只读 SQLite 查询（仅允许 SELECT/PRAGMA，参数化查询防注入）。
 
@@ -746,7 +757,7 @@ def db_query(db_path: str, sql: str, params: list = None) -> str:
     return _json(_db_query(db_path, sql, params=params or []))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def dep_scan(project_dir: str = ".", timeout: int = 10) -> str:
     """Python 依赖扫描：构建依赖图并检测循环依赖。
 
@@ -757,7 +768,7 @@ def dep_scan(project_dir: str = ".", timeout: int = 10) -> str:
     return _json(_dep_scan(project_dir=project_dir, timeout=timeout))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def uuid_gen(kind: str = "uuid4", length: int = 16) -> str:
     """生成 UUID4 / 随机 hex / 随机 token。
 
@@ -794,7 +805,7 @@ def main():
         print(f"Irmia DevKit MCP HTTP -> http://{args.host}:{args.port}/mcp  (本地专用)", file=sys.stderr)
         mcp.settings.host = args.host
         mcp.settings.port = args.port
-        mcp.run(transport="sse")
+        mcp.run(transport="streamable-http")
     else:
         # stdio 模式：stdout 只传 JSON-RPC，横幅静默（诊断信息一律走 stderr）
         print_startup_banner(_mcp_config, quiet=True)

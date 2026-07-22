@@ -718,7 +718,9 @@ class CodeGraph:
             row = conn.execute("SELECT value FROM meta WHERE key='project_dir'").fetchone()
             if row:
                 try:
-                    rel = Path(fp).relative_to(Path(row[0]))
+                    # tempfile paths on macOS commonly use /var while resolve()
+                    # canonicalizes the indexed root to /private/var.
+                    rel = Path(fp).resolve().relative_to(Path(row[0]).resolve())
                     posix = rel.as_posix()
                     candidates.add(posix)
                     candidates.add(posix.replace("/", "\\"))

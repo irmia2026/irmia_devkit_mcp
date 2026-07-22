@@ -1,7 +1,9 @@
 {
   "name": "irmia-devkit",
-  "version": "2.7.1",
-  "description": "提供一系列LLM友好的实用工具，显著提高开发效率。以safe_edit为核心——每次代码编辑自动备份、语法检查、失败回滚，让AI安全地修改你的代码。",
+  "version": "2.7.2",
+  "description": "提供 44 个带权限注解的 MCP 开发工具和配套安全开发工作流；可读写本机文件、执行测试、检查进程并访问外部网络。",
+  "homepage": "https://github.com/irmia2026/irmia_devkit_mcp",
+  "repository": "https://github.com/irmia2026/irmia_devkit_mcp",
   "skills": "skills",
   "mcpServers": {
     "irmia-devkit": {
