@@ -292,26 +292,9 @@ def search(
     # --- 执行 ---
     proc = _run_cmd(args, timeout=15)
     if not proc["ok"]:
-        err_msg = proc.get("error", "")
-        if "超时" in err_msg:
-            return proposal_reply(
-                False,
-                "Everything 搜索超时 (15s)——尝试缩小搜索范围",
-                error="es.exe 搜索超时（15s）",
-                evidence={"query": query, "timeout": 15},
-                options=["缩小 path 范围", "简化 query 通配符", "回退到 dir_list"],
-                next_call={"tool": "dir_list", "params": {"path": path or "."}},
-            )
-        if "不存在" in err_msg or "未安装" in err_msg:
-            return proposal_reply(
-                False,
-                "es.exe 未找到",
-                error=err_msg,
-                evidence={"query": query},
-                options=["检查 query 语法", "回退到 dir_list"],
-                next_call={"tool": "dir_list", "params": {"path": path or "."}},
-            )
-        return {"ok": False, "error": proc.get("stderr", "") or f"es.exe 返回码 {proc.get('code')}"}
+        # es.exe 失败时回退到 Python 搜索（如 CI 环境没有 Everything 服务）
+        return _python_fallback_search(query, path or ".", max_results,
+                                       case_sensitive, file_type, ext)
 
     # --- 解析 CSV ---
     reader = csv.DictReader(io.StringIO(proc["stdout"]))

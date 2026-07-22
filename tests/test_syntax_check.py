@@ -9,9 +9,11 @@ import pytest
 from tools.syntax_check import check
 
 
-def _write_temp(suffix, content):
-    fd, path = tempfile.mkstemp(suffix=suffix, text=True)
-    with os.fdopen(fd, "w") as f:
+def _write_temp(suffix, content, encoding=None):
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    mode = "w" if encoding else "w"
+    kw = {"encoding": encoding} if encoding else {}
+    with os.fdopen(fd, mode, **kw) as f:
         f.write(content)
     return path
 
@@ -78,7 +80,7 @@ class TestSyntaxCheckPython:
 
     def test_gbk_fallback(self):
         """UTF-8 失败时回退 GBK"""
-        path = _write_temp(".py", "x = '中文'\n")
+        path = _write_temp(".py", "x = '中文'\n", encoding="gbk")
         try:
             result = check(path)
             assert result["ok"] is True

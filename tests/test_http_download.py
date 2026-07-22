@@ -38,6 +38,10 @@ class TestHttpDownload:
         assert r["ok"] is False
 
     def test_system_destination_blocked_before_network(self, monkeypatch):
+        import sys
+        if sys.platform == "win32":
+            import pytest
+            pytest.skip("系统路径拦截测试仅适用于 POSIX")
         monkeypatch.setattr(http_download, "check_url", lambda _url: None)
         r = download("https://example.com/file", "/etc/hosts", overwrite=True)
         assert r["ok"] is False
