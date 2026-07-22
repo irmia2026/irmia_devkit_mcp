@@ -10,7 +10,9 @@ irmia_devkit_mcp/
 ├── __main__.py              # Source-tree module wrapper; wheel CLI targets server:main
 ├── pyproject.toml           # Python package metadata (setuptools)
 ├── package.json             # npm-side metadata for MCP client registries
-├── bin/                     # Polyglot manifest launcher (.cmd) + POSIX helper (.sh)
+├── reasonix-plugin.json     # Plugin manifest mounting MCP + dev-workflow Skill
+├── bin/                     # npm Node, Python bootstrap, POSIX, and batch launchers
+├── skills/dev-workflow/     # Companion safe-development workflow
 ├── tools/                   # Tool implementations (synced from irmia_devkit_open)
 │   ├── safe_edit.py         # backup → replace → syntax check → rollback
 │   ├── safe_read.py         # enhanced file reading (encoding / hex / skeleton)
@@ -21,7 +23,7 @@ irmia_devkit_mcp/
 │   ├── _http_utils.py       # SSRF validation shared by http_get / http_download
 │   ├── _file_utils.py       # shared file utilities
 │   └── ... (49 modules)
-├── vendor/                  # Optional user-supplied binaries (none shipped)
+├── vendor/                  # Verified x86-64 search binaries + checksums/licenses
 ├── tests/                   # 38 pytest files, one per tool module
 ├── README.md                # User documentation
 ├── CHANGELOG.md             # Version history (Keep a Changelog)
@@ -33,7 +35,7 @@ irmia_devkit_mcp/
 
 ```
 MCP client (Claude Code / Cursor / Windsurf / ...)
-    │  JSON-RPC over stdio │ SSE on localhost
+    │  JSON-RPC over stdio │ Streamable HTTP on localhost
     ▼
 server.py ── FastMCP host
     │  @mcp.tool(annotations=...) registration
@@ -60,11 +62,11 @@ Tool implementations are pure functions returning plain dicts. `server.py` is a 
 
 **Rationale.** Every filesystem tool operates on the machine running the server. Binding to a routable address would expose arbitrary host paths and file contents to the network. This is enforced in code, not configuration, so it cannot be disabled by mistake.
 
-### ADR-3 — User-controlled binary resolution
+### ADR-3 — Auditable bundled binary resolution
 
-**Decision.** External executables (`rg`, `fd`, `es`) are resolved in this order: project `vendor/` → PATH → well-known install locations. On Windows `.exe` is preferred; on POSIX systems the extensionless binary is preferred and non-executable candidates are skipped.
+**Decision.** External executables (`rg`, `fd`, `es`) are resolved in this order: environment/manual configuration → verified project `vendor/` → PATH → pure-Python fallback. Bundled `.exe` files are eligible only on Windows x86-64; bundled extensionless musl files are eligible only on Linux x86-64. Every bundled candidate must match `vendor/SHA256SUMS` before use.
 
-**Rationale.** The package does not ship opaque third-party executables. Users retain control of binary provenance by installing official releases on PATH or placing a verified platform build in `vendor/`. Pure-Python fallbacks in `rg_search` / `es_search` keep the server functional with no external tools at all.
+**Rationale.** Supported x86-64 users keep zero-config search performance, while every bundled file is traceable to an official upstream asset through `vendor/README.txt`, covered by `vendor/THIRD_PARTY_LICENSES.txt`, and locked by `vendor/SHA256SUMS`. Packaging tests reject checksum drift. Users on other architectures retain control through PATH or a platform build in `vendor/`; pure-Python fallbacks keep the server functional without any external executable.
 
 ### ADR-4 — Proposal protocol for recoverable failures
 
@@ -81,7 +83,7 @@ Tool implementations are pure functions returning plain dicts. `server.py` is a 
 ```
 Startup sequence:
   1. load_config()       → read ~/.irmia/mcp_config.json
-  2. scan_tools()        → detect vendor/ → PATH → well-known paths (rg / fd / es)
+  2. scan_tools()        → detect verified vendor/ → PATH (rg / fd / es)
   3. fill empty paths    → write back to mcp_config.json when new tools are found
   4. set_config()        → inject into the global config singleton
   5. check_and_warn()    → print install guidance for missing tools
@@ -93,7 +95,7 @@ Startup sequence:
 | Mode | Command | Transport | Scope |
 |------|---------|-----------|-------|
 | stdio | `python server.py` | stdin/stdout | Single agent (default for MCP clients) |
-| HTTP (local) | `python server.py --http` | SSE on 127.0.0.1 | Local browser-based clients |
+| HTTP (local) | `python server.py --http` | Streamable HTTP on 127.0.0.1 | Local browser-based clients |
 | Remote | `--host 0.0.0.0` | **rejected** | Blocked at startup (ADR-2) |
 
 ## Tool registration pattern
@@ -127,7 +129,7 @@ Rules every registration follows:
 | Exact versions in `requirements.txt` (`mcp`, Beautiful Soup, lxml, PyYAML, psutil) | tree-sitter — multi-language indexing in `code_index` |
 | | ripgrep / fd / Everything CLI — accelerated search |
 
-Optional external executables degrade gracefully and are not included in release artifacts.
+Verified x86-64 executables are included in plugin and npm artifacts. Wheels remain portable Python distributions and use PATH or pure-Python fallbacks when those executables are absent.
 
 ## Testing
 

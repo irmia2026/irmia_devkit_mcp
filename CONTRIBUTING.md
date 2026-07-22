@@ -97,7 +97,7 @@ Rules:
 | ZIP slip | `tools/file_zip.py` | per-entry `resolve()` prefix check against the target directory |
 | SQL injection | `tools/db_query.py` | SELECT/PRAGMA allowlist, read-only mode, parameterized queries |
 | Command injection | `tools/test_runner.py` | allowlisted executables/subcommands, shell-control-character rejection, `shell=False` |
-| Binary hijacking | `tools/auto_config.py` | no executable is shipped; a user-supplied `vendor/` path is derived from `__file__`, never from the working directory |
+| Binary hijacking | `tools/_vendor.py`, `tools/auto_config.py` | configured paths win; bundled executables are selected only for an exact OS/architecture pair and after SHA-256 verification from `vendor/SHA256SUMS` |
 
 When you touch any of these files, extend the corresponding tests rather than weakening a check to make a test pass.
 
@@ -113,7 +113,7 @@ The standard library is the default. Before adding a third-party dependency:
 
 - [ ] `pytest tests/ -q` — fully green
 - [ ] `python server.py` — starts on stdio, banner shows resolved tools
-- [ ] `python server.py --http` — starts SSE on 127.0.0.1
+- [ ] `python server.py --http` — starts Streamable HTTP on 127.0.0.1
 - [ ] Tool count in README table matches `@mcp.tool()` registrations in `server.py`
 - [ ] Version bumped consistently in `pyproject.toml`, `package.json`, and `reasonix-plugin.json`
 - [ ] Real MCP handshake returns 44 tools with explicit safety annotations

@@ -77,6 +77,8 @@ mcp = FastMCP(
     "irmia-devkit",
     instructions="弥亚开发工具箱 MCP — 安全代码编辑、搜索、测试、代码智能、网络、文件、编码、时间、文本处理、系统信息。为仅有 shell 的 bare agent 提供全面且安全的开发工具集。",
 )
+# FastMCP 1.27 does not expose its underlying Server version parameter.
+mcp._mcp_server.version = "2.7.2"
 
 # These hints are part of the public MCP schema. Hosts can use them to keep
 # inspection available in read-only modes and gate mutations appropriately.
@@ -199,7 +201,7 @@ def syntax_check(filepath: str) -> str:
     return _json(_syntax_check(filepath))
 
 
-@mcp.tool(annotations=READ_ONLY)
+@mcp.tool(annotations=WRITE)
 def lint_runner(filepath: str, linter: str = "auto") -> str:
     """运行代码质量检查。自动 fallback: ruff → pylint → eslint。
 
@@ -803,7 +805,7 @@ def main():
         print(f"Irmia DevKit MCP HTTP -> http://{args.host}:{args.port}/mcp  (本地专用)", file=sys.stderr)
         mcp.settings.host = args.host
         mcp.settings.port = args.port
-        mcp.run(transport="sse")
+        mcp.run(transport="streamable-http")
     else:
         # stdio 模式：stdout 只传 JSON-RPC，横幅静默（诊断信息一律走 stderr）
         print_startup_banner(_mcp_config, quiet=True)

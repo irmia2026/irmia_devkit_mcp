@@ -22,14 +22,14 @@
 
 ---
 
-`irmia_devkit_mcp` packages 44 battle-tested development tools from [`irmia_devkit_open`](https://github.com/irmia2026/irmia_devkit_open) as a standalone [Model Context Protocol](https://modelcontextprotocol.io/) server. Any MCP-compatible agent — Claude Code, Cursor, Codex, Windsurf — can call `safe_edit`, `code_explore`, `rg_search` and friends as first-class tools, with hardened security defaults out of the box.
+`irmia_devkit_mcp` packages 44 battle-tested development tools from [`irmia_devkit_open`](https://github.com/irmia2026/irmia_devkit_open) as a standalone [Model Context Protocol](https://modelcontextprotocol.io/) server. It also declares the companion `dev-workflow` Skill through `reasonix-plugin.json`, so plugin-aware hosts can install the tools and their safe coding workflow together. Any MCP-compatible agent — Claude Code, Cursor, Codex, Windsurf — can call `safe_edit`, `code_explore`, `rg_search` and friends as first-class tools, with hardened security defaults out of the box.
 
 ## Why this server
 
 | Feature | What it means |
 |---------|---------------|
 | 🔒 **Local transport** | Refuses non-loopback HTTP binds. MCP clients may still send tool inputs and outputs to their configured model provider. |
-| ⚡ **Zero config** | Uses user-installed `rg`, `fd`, or `es` from PATH and falls back to pure-Python implementations. No third-party executable is bundled. |
+| ⚡ **Zero config** | Includes verified x86-64 search binaries for Windows/Linux, then falls back to PATH or pure Python on other platforms. |
 | 🛡️ **Defense in depth** | Four-layer SSRF filtering, automatic edit backups with rollback, unified path-traversal checks on every file operation. |
 | 🧠 **Semantic index** | Python AST + SQLite FTS5 — symbol search, call chains, and impact analysis in milliseconds. |
 | 📦 **44 tools** | Editing, search, testing, code intelligence, networking, files, encoding, time, text processing, system info. |
@@ -37,13 +37,22 @@
 
 ## Quick start
 
-**Requirements:** Python ≥ 3.10 (on Windows, either check *Add python.exe to PATH* during installation or install the `py` launcher). The launcher scripts (`bin/irmia-devkit.cmd` / `.sh`) automatically create a project-local `.venv` on first launch and install dependencies into it — nothing touches your global site-packages.
+**Requirements:** Python ≥ 3.10 (on Windows, either check *Add python.exe to PATH* during installation or install the `py` launcher). The launchers call one standard-library Python bootstrap, which creates a project-local `.venv` on first launch and installs dependencies into it — nothing touches your global site-packages. npm commands use the included Node launcher to locate Python correctly on each platform. This first launch writes under the plugin directory and requires network access to PyPI unless the pinned dependencies are already installed in that venv.
+
+Reasonix users can preview the combined Skill + MCP plugin before installation:
+
+```bash
+reasonix plugin install https://github.com/irmia2026/irmia_devkit_mcp --dry-run
+reasonix plugin install https://github.com/irmia2026/irmia_devkit_mcp --yes
+```
+
+The native Reasonix manifest works on Linux/macOS. Reasonix v1.17.18 does not yet wrap plugin-local `.cmd` MCP commands with `cmd.exe` on Windows; Windows users should use the npm launcher or configure `python server.py` directly until the host adds batch-command wrapping.
 
 ```bash
 git clone https://github.com/irmia2026/irmia_devkit_mcp.git
 cd irmia_devkit_mcp
-bin/irmia-devkit.cmd       # Linux/macOS (the cross-platform manifest entry point)
-bin\irmia-devkit.cmd       # Windows — or run directly: python server.py
+bin/irmia-devkit.sh        # Linux/macOS
+bin\irmia-devkit.cmd       # Windows — or: npx irmia-devkit-mcp
 ```
 
 On first launch the server scans `vendor/` and PATH for `rg` / `fd` / `es` and writes `~/.irmia/mcp_config.json`. Point your MCP client at the launcher script (or `server.py`):
@@ -95,9 +104,9 @@ python server.py --http --port 8000
 | 5 | 🔧 Encoding / time / misc | `encode_decode` `time` `db_query` `dep_scan` `uuid_gen` |
 | 3 | 🌐 Networking | `http_get` `http_post` `http_download` |
 
-## External tool resolution
+## Bundled search tools and resolution
 
-No third-party executable is shipped. Search order is: **user-supplied project `vendor/` → PATH → well-known install locations**. Linux/macOS binaries must be executable; Windows `.exe` files are preferred on Windows and skipped elsewhere. Download optional tools from their official projects and verify them according to your own supply-chain policy.
+Runtime search order is: **environment/manual configuration → verified project `vendor/` → PATH → pure-Python fallback**. The repository bundles upstream x86-64 releases of ripgrep and fd for Windows/Linux plus Everything CLI for Windows. Archive URLs, archive hashes, extraction members, licenses, and extracted-file SHA-256 hashes are recorded in [`vendor/README.txt`](vendor/README.txt), [`vendor/SHA256SUMS`](vendor/SHA256SUMS), and [`vendor/THIRD_PARTY_LICENSES.txt`](vendor/THIRD_PARTY_LICENSES.txt); packaging tests pin every extracted hash. macOS, ARM, and other unsupported targets automatically use PATH or the Python fallback.
 
 ```json
 // ~/.irmia/mcp_config.json (auto-generated, user-editable)
@@ -121,10 +130,11 @@ Precedence: environment variable (`IRMIA_ES_PATH`, `IRMIA_RG_PATH`, `IRMIA_FD_PA
 | Layer | Mechanism |
 |-------|-----------|
 | Editing | Backup → replace → syntax check → rollback on failure |
-| Network | SSRF defense in depth: scheme allowlist, IP-range blocklist (incl. `0.0.0.0/8`, multicast, reserved), DNS-resolution re-validation, per-redirect re-validation |
+| Network | SSRF defense in depth: scheme allowlist, IP-range blocklist, DNS answer pinning, proxy bypass, and per-redirect re-validation |
 | SQL | `db_query` read-only, SELECT/PRAGMA allowlist, parameterized queries |
-| Paths | `..` traversal rejection + `resolve()` prefix validation + system-directory blocklist |
+| Paths | `..` traversal rejection + canonical prefix validation + filesystem-root, user-home, and system-directory blocklist |
 | Deployment | Non-localhost binding refused at startup |
+| Startup | The source/plugin launcher may create `.venv`, install pinned direct dependencies from PyPI, and write detected-tool configuration under `~/.irmia/` |
 
 ### Required capabilities and data flow
 
@@ -138,6 +148,7 @@ This server is intentionally powerful. Depending on the selected tool, it can re
 | [CHANGELOG.md](CHANGELOG.md) | Version history (Keep a Changelog) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Adding tools, return-value conventions, security checklist |
 | [LICENSE](LICENSE) | AGPL-3.0 |
+| [vendor/THIRD_PARTY_LICENSES.txt](vendor/THIRD_PARTY_LICENSES.txt) | Licenses for bundled search binaries |
 
 ## FAQ
 
@@ -145,7 +156,7 @@ This server is intentionally powerful. Depending on the selected tool, it can re
 `irmia_devkit_mcp` is the MCP-packaged edition. Tool implementations are synced from upstream; the server runs standalone without AstrBot.
 
 **What do I need to install?**
-Python ≥ 3.10. The launchers install the exact versions in `requirements.txt` into a project-local virtual environment. Optional binaries accelerate search but are never required.
+Python ≥ 3.10. The launchers install the exact versions in `requirements.txt` into a project-local virtual environment. Bundled search binaries accelerate supported x86-64 systems but are never required.
 
 **Can I deploy this on a shared server?**
 No — by design. The server only binds to localhost, and every filesystem tool operates on the machine it runs on. Shared deployment would leak host paths and file contents.

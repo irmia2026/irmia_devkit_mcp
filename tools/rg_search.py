@@ -7,15 +7,10 @@ import os
 import re
 import subprocess
 import shutil
-from pathlib import Path
 
 from ._helpers import proposal_reply
-
-IS_WINDOWS = os.name == "nt"
-
-
-_VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor"
-
+from ._vendor import bundled_executable
+from .config import get_config
 
 # 扫描时跳过的目录名
 _SKIP_DIRS = {
@@ -38,15 +33,14 @@ def _has_nested_quantifiers(pattern: str) -> bool:
 
 
 def _find_rg() -> str | None:
-    """查找 rg 可执行文件路径：优先项目内置目录 → PATH，未找到返回 None。
+    """查找 rg 可执行文件路径：配置 → 已校验内置版本 → PATH。
     跨平台：Linux/macOS 优先原生 rg，Windows 优先 rg.exe。"""
-    names = ("rg.exe", "rg") if IS_WINDOWS else ("rg", "rg.exe")
-    for name in names:
-        candidate = str(_VENDOR_DIR / name)
-        if os.path.isfile(candidate):
-            if not IS_WINDOWS and not os.access(candidate, os.X_OK):
-                continue
-            return candidate
+    custom = get_config().get("rg_path", "")
+    if custom and os.path.isfile(custom):
+        return custom
+    bundled = bundled_executable("rg")
+    if bundled:
+        return bundled
     return shutil.which("rg")
 
 

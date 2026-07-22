@@ -2,6 +2,8 @@
 **/*.py[cod]
 tools/__pycache__/
 tools/**/*.pyc
+bin/__pycache__/
+bin/*.pyc
 .pytest_cache/
 .venv/
 tests/

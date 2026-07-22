@@ -1,5 +1,15 @@
 """Contract tests for the public MCP tool surface."""
 
+
+def test_server_version_matches_package_version():
+    import json
+    from pathlib import Path
+
+    import server
+
+    package = json.loads((Path(__file__).resolve().parents[1] / "package.json").read_text(encoding="utf-8"))
+    assert server.mcp._mcp_server.version == package["version"]
+
 def test_all_tools_publish_explicit_safety_annotations():
     import server
 
@@ -7,7 +17,7 @@ def test_all_tools_publish_explicit_safety_annotations():
     assert len(tools) == 44
 
     read_only = {
-        "safe_backups", "file_preview", "syntax_check", "lint_runner",
+        "safe_backups", "file_preview", "syntax_check",
         "http_get", "safe_read", "es_search", "rg_search", "dir_tree",
         "dir_list", "file_diff", "file_hash", "disk_info", "config_diff",
         "port_check", "proc_list", "sys_snapshot", "html_extract",
@@ -22,14 +32,17 @@ def test_all_tools_publish_explicit_safety_annotations():
     open_world = {"http_get", "http_post", "http_download", "port_check"}
 
     assert {name for name, tool in tools.items() if tool.annotations.readOnlyHint} == read_only
+    assert tools["lint_runner"].annotations.readOnlyHint is False
     assert {name for name, tool in tools.items() if tool.annotations.destructiveHint} == destructive
     assert {name for name, tool in tools.items() if tool.annotations.openWorldHint} == open_world
 
-    index_writers = {"code_index", "code_explore", "code_pack", "code_diff_impact", "code_status"}
+    non_destructive_writers = {
+        "code_index", "code_explore", "code_pack", "code_diff_impact", "code_status", "lint_runner",
+    }
     assert {
         name for name, tool in tools.items()
         if tool.annotations.readOnlyHint is False and tool.annotations.destructiveHint is False
-    } == index_writers
+    } == non_destructive_writers
 
     for tool in tools.values():
         annotations = tool.annotations

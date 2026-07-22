@@ -20,15 +20,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from ._vendor import bundled_executable
+
 IS_WINDOWS = platform.system() == "Windows"
 IS_MACOS = platform.system() == "Darwin"
 IS_LINUX = platform.system() == "Linux"
 
 CONFIG_DIR = Path.home() / ".irmia"
 CONFIG_PATH = CONFIG_DIR / "mcp_config.json"
-
-# -- 用户可选二进制目录（发布包不内置；可放置已验证的 rg / es / fd） --------
-VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor"
 
 # -- 默认配置 --------------------------------------------------
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -91,7 +90,7 @@ def _get_platform_key() -> str:
 
 
 def _find_exe(names: list[str], extra_paths: list[str] | None = None) -> str:
-    """搜索可执行文件：用户提供的 vendor 目录 → PATH → 常见路径 → 返回空字符串。
+    """搜索可执行文件：项目 vendor 目录 → PATH → 常见路径 → 返回空字符串。
     跨平台：Linux/macOS 优先无后缀原生二进制，忽略 .exe；Windows 优先 .exe。"""
     # 根据平台决定候选顺序：Linux/macOS 优先无后缀，Windows 优先 .exe
     if IS_WINDOWS:
@@ -99,14 +98,11 @@ def _find_exe(names: list[str], extra_paths: list[str] | None = None) -> str:
     else:
         ordered = sorted(names, key=lambda n: (n.endswith(".exe"), n))
 
-    # 1. 优先搜索项目内置目录
-    for name in ordered:
-        candidate = str(VENDOR_DIR / name)
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            return candidate
-        # Windows 上 .exe 可能没有显式 X 权限，但仍可执行
-        if IS_WINDOWS and os.path.isfile(candidate):
-            return candidate
+    # 1. 优先使用与当前 OS/架构匹配且哈希通过的项目内置版本
+    tool = next((Path(name).stem for name in names if Path(name).stem in {"es", "fd", "rg"}), "")
+    bundled = bundled_executable(tool)
+    if bundled:
+        return bundled
 
     # 2. 系统 PATH
     for name in ordered:

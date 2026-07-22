@@ -4,3 +4,6 @@ metadata.yaml text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
 *.md text eol=lf
+vendor/rg -text
+vendor/fd -text
+vendor/*.exe -text

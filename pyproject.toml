@@ -6,7 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "irmia-devkit-mcp"
 version = "2.7.2"
 description = "Irmia DevKit MCP Server — 为 Vibe Coding 工具提供安全代码开发工具集"
-license = {text = "AGPL-3.0-only"}
+readme = "README.md"
+license = "AGPL-3.0-only"
+authors = [{name = "伊尔弥亚"}]
+keywords = ["mcp", "coding-tools", "safe-edit", "reasonix-plugin"]
 requires-python = ">=3.10"
 dependencies = [
     "mcp==1.27.0",
@@ -18,6 +21,11 @@ dependencies = [
 
 [project.scripts]
 irmia-devkit = "server:main"
+
+[project.urls]
+Homepage = "https://github.com/irmia2026/irmia_devkit_mcp"
+Repository = "https://github.com/irmia2026/irmia_devkit_mcp"
+Issues = "https://github.com/irmia2026/irmia_devkit_mcp/issues"
 
 [tool.setuptools]
 py-modules = ["__main__", "server"]

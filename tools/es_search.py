@@ -13,27 +13,21 @@ import shutil
 from pathlib import Path
 from .config import get_config
 from ._helpers import proposal_reply, _run_cmd
+from ._vendor import bundled_executable
 
 IS_WINDOWS = os.name == "nt"
 
 
-_VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor"
-
-
 def _get_es_path() -> str:
-    """获取 es.exe 路径：项目内置目录 → 配置 → PATH → 默认 es"""
-    names = ("es.exe", "es") if IS_WINDOWS else ("es", "es.exe")
-    for name in names:
-        candidate = str(_VENDOR_DIR / name)
-        if os.path.isfile(candidate):
-            if not IS_WINDOWS and not os.access(candidate, os.X_OK):
-                continue
-            return candidate
-
+    """获取 es.exe 路径：配置 → 已校验内置版本 → PATH → 默认 es。"""
     config = get_config()
     custom = config.get("es_path", "")
     if custom and os.path.exists(custom):
         return custom
+
+    bundled = bundled_executable("es")
+    if bundled:
+        return bundled
 
     found = shutil.which("es")
     if found:
@@ -59,6 +53,14 @@ _POSIX_SKIP_DIRS = {
 }
 
 _MAX_POSIX_FILES = 10000
+
+
+def _find_fd() -> str | None:
+    """Resolve fd using configured path, verified bundle, then PATH."""
+    custom = get_config().get("fd_path", "")
+    if custom and os.path.isfile(custom):
+        return custom
+    return bundled_executable("fd") or shutil.which("fd")
 
 
 def _posix_search(
@@ -88,17 +90,7 @@ def _posix_search(
             pass
 
     # --- Layer 2: fd ---
-    fd_path = None
-    names = ("fd.exe", "fd") if IS_WINDOWS else ("fd", "fd.exe")
-    for name in names:
-        candidate = str(_VENDOR_DIR / name)
-        if os.path.isfile(candidate):
-            if not IS_WINDOWS and not os.access(candidate, os.X_OK):
-                continue
-            fd_path = candidate
-            break
-    if not fd_path:
-        fd_path = shutil.which("fd")
+    fd_path = _find_fd()
     if fd_path:
         try:
             type_arg = "f" if file_type == "file" else ("d" if file_type == "folder" else None)
