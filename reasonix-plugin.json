@@ -1,13 +1,18 @@
 {
+  "apiVersion": "reasonix.io/plugin/v2",
   "name": "irmia-devkit",
   "version": "2.7.2",
   "description": "提供 44 个带权限注解的 MCP 开发工具和配套安全开发工作流；可读写本机文件、执行测试、检查进程并访问外部网络。",
   "homepage": "https://github.com/irmia2026/irmia_devkit_mcp",
   "repository": "https://github.com/irmia2026/irmia_devkit_mcp",
-  "skills": "skills",
-  "mcpServers": {
-    "irmia-devkit": {
-      "command": "bin/irmia-devkit.cmd"
+  "contributes": {
+    "skills": [
+      "skills"
+    ],
+    "mcpServers": {
+      "irmia-devkit": {
+        "command": "bin/irmia-devkit.cmd"
+      }
     }
   }
 }
